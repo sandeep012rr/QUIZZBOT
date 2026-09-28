@@ -35,12 +35,31 @@ def extract_text_from_docx(file_path):
         print(f"DOCX Error: {e}")
     return text
 
+def get_best_groq_model():
+    try:
+        url = "https://api.groq.com/openai/v1/models"
+        headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
+        res = requests.get(url, headers=headers, timeout=10)
+        if res.status_code == 200:
+            available = [m["id"] for m in res.json().get("data", [])]
+            for p in ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]:
+                if p in available:
+                    return p
+            if available:
+                return available[0]
+    except Exception as e:
+        print(f"Model fetch error: {e}")
+    return "llama3-8b-8192"
+
 def generate_quiz_with_groq(text_content):
     url = "https://api.groq.com/openai/v1/chat/completions"
     headers = {
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
+
+    active_model = get_best_groq_model()
+    print(f"Using Groq model: {active_model}")
 
     prompt = f"""
 आप एक उच्च स्तरीय शिक्षक भर्ती एवं प्रतियोगी परीक्षा विशेषज्ञ हैं। 
@@ -68,8 +87,7 @@ JSON संरचना:
 """
 
     payload = {
-      "model": "llama-3.1-8b-instant",
-
+        "model": active_model,
         "messages": [
             {"role": "system", "content": "You are a professional exam quiz generator. Output ONLY a valid JSON object."},
             {"role": "user", "content": prompt}
