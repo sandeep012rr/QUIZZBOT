@@ -35,21 +35,26 @@ def extract_text_from_docx(file_path):
         print(f"DOCX Error: {e}")
     return text
 
-def get_best_groq_model():
+def get_valid_groq_models():
+    """Groq API se sabhi valid chat models ki list nikalta hai"""
     try:
         url = "https://api.groq.com/openai/v1/models"
         headers = {"Authorization": f"Bearer {GROQ_API_KEY}"}
         res = requests.get(url, headers=headers, timeout=10)
         if res.status_code == 200:
-            available = [m["id"] for m in res.json().get("data", [])]
-            for p in ["llama-3.3-70b-versatile", "llama-3.1-70b-versatile", "llama3-70b-8192", "llama-3.1-8b-instant", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]:
-                if p in available:
-                    return p
-            if available:
-                return available[0]
+            all_models = [m["id"] for m in res.json().get("data", [])]
+            valid = []
+            # Audio, Guard, Arabic aur terms wale models ko filter karein
+            skip_keywords = ["whisper", "guard", "orpheus", "embed", "tts", "speech", "vision", "audio", "canopylabs", "safeguard"]
+            for m in all_models:
+                m_lower = m.lower()
+                if not any(k in m_lower for k in skip_keywords):
+                    valid.append(m)
+            if valid:
+                return valid
     except Exception as e:
         print(f"Model fetch error: {e}")
-    return "llama3-8b-8192"
+    return ["llama-3.3-70b-versatile", "llama-3.1-8b-instant", "llama3-8b-8192", "mixtral-8x7b-32768", "gemma2-9b-it"]
 
 def generate_quiz_with_groq(text_content):
     url = "https://api.groq.com/openai/v1/chat/completions"
@@ -57,9 +62,6 @@ def generate_quiz_with_groq(text_content):
         "Authorization": f"Bearer {GROQ_API_KEY}",
         "Content-Type": "application/json"
     }
-
-    active_model = get_best_groq_model()
-    print(f"Using Groq model: {active_model}")
 
     prompt = f"""
 आप एक उच्च स्तरीय शिक्षक भर्ती एवं प्रतियोगी परीक्षा विशेषज्ञ हैं। 
@@ -86,28 +88,53 @@ JSON संरचना:
 {text_content[:8000]}
 """
 
-    payload = {
-        "model": active_model,
-        "messages": [
-            {"role": "system", "content": "You are a professional exam quiz generator. Output ONLY a valid JSON object."},
-            {"role": "user", "content": prompt}
-        ],
-        "response_format": {"type": "json_object"},
-        "temperature": 0.4
-    }
+    models_to_try = get_valid_groq_models()
+    last_error = ""
 
-    response = requests.post(url, headers=headers, json=payload, timeout=120)
-    if response.status_code == 200:
-        res_json = response.json()
-        content = res_json["choices"][0]["message"]["content"]
-        data = json.loads(content)
-        return data.get("quizzes", [])
-    else:
-        raise Exception(f"Groq API Error {response.status_code}: {response.text}")
+    # Agar ek model fail ho toh automatically dusre model se koshish karein
+    for model_name in models_to_try:
+        try:
+            print(f"Trying Groq model: {model_name}")
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {"role": "system", "content": "You are a professional exam quiz generator. Output ONLY a valid JSON object."},
+                    {"role": "user", "content": prompt}
+                ],
+                "response_format": {"type": "json_object"},
+                "temperature": 0.4
+            }
+
+            response = requests.post(url, headers=headers, json=payload, timeout=120)
+            if response.status_code == 200:
+                res_json = response.json()
+                content = res_json["choices"][0]["message"]["content"]
+                data = json.loads(content)
+                quizzes = data.get("quizzes", [])
+                if quizzes:
+                    return quizzes
+            else:
+                last_error = f"{model_name} Error {response.status_code}: {response.text}"
+                print(last_error)
+        except Exception as e:
+            last_error = str(e)
+            print(f"Failed with {model_name}: {e}")
+            continue
+
+    raise Exception(f"सभी उपलब्ध मॉडल्स पर प्रयास किया गया, अंतिम एरर: {last_error}")
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "नमस्ते! मुझे कोई भी PDF या DOCX फ़ाइल भेजें, मैं Groq AI की मदद से 20 कठिन क्विज़ बनाकर सीधे चैनल पर पोस्ट कर दूँगा।")
+    bot.reply_to(message, "नमस्ते! मुझे कोई भी PDF या DOCX फ़ाइल भेजें, मैं Groq AI से 20 कठिन प्रश्न बनाकर सीधे चैनल पर पोस्ट कर दूँगा।\n\nउपलब्ध मॉडल्स देखने के लिए /models भेजें।")
+
+@bot.message_handler(commands=['models'])
+def list_models(message):
+    try:
+        models = get_valid_groq_models()
+        text = "📋 उपलब्ध Groq मॉडल्स:\n\n" + "\n".join(models)
+        bot.reply_to(message, text[:4000])
+    except Exception as e:
+        bot.reply_to(message, f"❌ एरर: {e}")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
@@ -180,4 +207,4 @@ def handle_docs(message):
 
 print("Bot started on AWS with Groq AI...")
 bot.infinity_polling()
-        
+                  
