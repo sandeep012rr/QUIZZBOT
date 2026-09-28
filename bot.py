@@ -149,4 +149,10 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
     print("बॉट चालू हो गया है...")
-    bot.polling(none_stop=True)
+        try:
+        print("बॉट चालू हो गया है...")
+        # यह लाइन पुराने सभी अटके हुए मैसेजेस को हटा देगी जिससे 409 एरर खत्म हो जाएगा
+        bot.polling(none_stop=True, skip_pending=True)
+    except Exception as e:
+        print(f"Error in polling: {e}")
+
