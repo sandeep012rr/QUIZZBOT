@@ -1,219 +1,164 @@
-import telebot
-try:
-    import pypdf as PyPDF2
-except ImportError:
-    import PyPDF2
-import docx
 import os
-import threading
 import time
 import json
-import random
+import telebot
 import requests
+from pypdf import PdfReader
+from docx import Document
 
-# --- 6 API KEYS (CONFIGURED) ---
-API_KEYS = [
-    "AQ.Ab8RN6KKI3tKaKz6G_RgKKaS7uZdK4HdbyIkvRwA4qS2C8qDAQ",
-    "AQ.Ab8RN6KWPbEqUjomMQUyR-tXUIHtPJg4pm_51lncMflOxtZpEA",
-    "AQ.Ab8RN6IJdv3mP5IC75nbcXvAjp1VPm3wWJVulrszE2-zaa-ynQ",
-    "AQ.Ab8RN6JP1xU6_471YqfIldY4oZDb439bVrwFUCprvl1obtOJ1g",
-    "AQ.Ab8RN6IsxSCwjhcuK0ncXbeCInko-fn-YXZIQN6PRYjV9Xpz8A",
-    "AQ.Ab8RN6I2cta-zcHIuJa54vuXv6Vkld4YY2-s5lQDS_8cK8ovxw"
-]
-
-# --- TELEGRAM BOT CONFIGURATION ---
 BOT_TOKEN = "7589769291:AAFSErrT1V5Wt1eGZ235vV4M2-QZuPALhTM"
 CHANNEL_ID = "@FIRST_GARDE_SPL"
+GROQ_API_KEY = "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"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# --- PDF / DOCX EXTRACTOR ---
-def extract_text(file_path):
+def extract_text_from_pdf(file_path):
     text = ""
-    if file_path.endswith('.pdf'):
-        with open(file_path, 'rb') as file:
-            reader = PyPDF2.PdfReader(file)
-            for page in reader.pages:
-                extracted = page.extract_text()
-                if extracted:
-                    text += extracted + "\n"
-    elif file_path.endswith('.docx'):
-        doc = docx.Document(file_path)
-        for para in doc.paragraphs:
-            if para.text:
-                text += para.text + "\n"
+    try:
+        reader = PdfReader(file_path)
+        for page in reader.pages:
+            t = page.extract_text()
+            if t:
+                text += t + "\n"
+    except Exception as e:
+        print(f"PDF Error: {e}")
     return text
 
-# --- GEMINI REST API (AQ KEY COMPATIBLE) ---
-def call_gemini_api(prompt, key):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}]
-    }
-    response = requests.post(url, headers=headers, json=payload, timeout=90)
-    if response.status_code == 200:
-        data = response.json()
-        return data["candidates"][0]["content"]["parts"][0]["text"]
-    elif response.status_code == 429:
-        raise Exception("429 Quota Exceeded")
-    else:
-        raise Exception(f"API Error {response.status_code}: {response.text}")
-
-# --- QUIZ GENERATOR PROMPT ---
-def generate_quiz_data(text):
-    keys_to_try = API_KEYS.copy()
-    random.shuffle(keys_to_try)
-    
-    prompt = f"""
-    You are an Expert Quiz Master and Competitive Exam Content Creator. 
-    Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided.
-
-    CRITICAL INSTRUCTIONS FOR ACCURACY:
-    1. Base Content: Create questions ONLY from the provided text. Do not invent facts.
-    2. Difficulty: Hard (Include Conceptual, Statement-Based, and Analytical questions).
-    3. Question Length: Question text MUST be concise and UNDER 250 characters. Options under 80 characters.
-    4. Language: Strictly Hindi (Devanagari script). All questions, options (A, B, C, D), and solutions must be in Hindi.
-    5. Question Count: Generate exactly 20 questions (or as many as the text allows).
-    6. Correct Answer Randomization (CRUCIAL): Distribute the correct answers evenly and randomly among A, B, C, and D. DO NOT make 'A' the correct answer for every question.
-    7. Solution Accuracy: The "solution" MUST clearly explain WHY the chosen option is correct based on the text.
-    8. Output Format: Return ONLY a valid raw JSON array without any markdown formatting or backticks.
-
-    JSON FORMAT TEMPLATE:
-    [
-      {{
-        "question": "Question in Hindi here?",
-        "A": "Option A in Hindi",
-        "B": "Option B in Hindi",
-        "C": "Option C in Hindi",
-        "D": "Option D in Hindi",
-        "answer": "B",
-        "solution": "Detailed solution in Hindi here.",
-        "positive_marks": "2",
-        "negative_marks": "0.66"
-      }}
-    ]
-
-    Text: {text[:40000]}
-    """
-    
-    last_err = None
-    for key in keys_to_try:
-        try:
-            return call_gemini_api(prompt, key)
-        except Exception as e:
-            last_err = e
-            continue
-            
-    raise Exception(f"All keys failed: {last_err}")
-
-# --- PARSE JSON RESPONSE ---
-def parse_quiz_data(raw_data):
-    quizzes = []
+def extract_text_from_docx(file_path):
+    text = ""
     try:
-        clean_data = raw_data.strip()
-        if clean_data.startswith("```json"): clean_data = clean_data[7:]
-        if clean_data.startswith("```"): clean_data = clean_data[3:]
-        if clean_data.endswith("```"): clean_data = clean_data[:-3]
-        clean_data = clean_data.strip()
-        
-        json_data = json.loads(clean_data)
-        
-        for item in json_data:
-            quiz = {
-                "question": item.get("question", ""),
-                "options": [
-                    str(item.get("A", "")),
-                    str(item.get("B", "")),
-                    str(item.get("C", "")),
-                    str(item.get("D", ""))
-                ],
-                "solution": item.get("solution", "")
-            }
-            ans = str(item.get("answer", "A")).strip().upper()
-            ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
-            quiz['correct_option_id'] = ans_map.get(ans, 0)
-            if len(quiz['options']) >= 2 and quiz['question']:
-                quizzes.append(quiz)
+        doc = Document(file_path)
+        for p in doc.paragraphs:
+            if p.text:
+                text += p.text + "\n"
     except Exception as e:
-        print(f"JSON Parsing Error: {e}")
-    return quizzes
+        print(f"DOCX Error: {e}")
+    return text
 
-# --- BACKGROUND CHANNEL POSTER ---
-def send_quizzes_background(message, quizzes):
-    for index, quiz_data in enumerate(quizzes):
-        try:
-            safe_question = quiz_data['question'][:290] 
-            safe_options = [opt[:95] for opt in quiz_data['options']]
-            safe_explanation = quiz_data['solution'][:195]
-            
-            header_text = f"📝 प्रश्न {index + 1}/{len(quizzes)}"
-            bot.send_message(CHANNEL_ID, header_text)
-            
-            bot.send_poll(
-                chat_id=CHANNEL_ID,
-                question=safe_question,
-                options=safe_options,
-                type="quiz",
-                correct_option_id=quiz_data['correct_option_id'],
-                explanation=safe_explanation, 
-                is_anonymous=True
-            )
-            
-            if index < len(quizzes) - 1:
-                time.sleep(30)
-        except Exception as e:
-            print(f"Poll Error: {e}")
-            
-    bot.reply_to(message, "✅ सभी प्रश्न चैनल पर सफलतापूर्वक पोस्ट हो चुके हैं!")
+def generate_quiz_with_groq(text_content):
+    url = "https://api.groq.com/openai/v1/chat/completions"
+    headers = {
+        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Content-Type": "application/json"
+    }
 
-# --- BOT HANDLERS ---
-@bot.message_handler(commands=['start'])
+    prompt = f"""
+आप एक उच्च स्तरीय शिक्षक भर्ती एवं प्रतियोगी परीक्षा विशेषज्ञ हैं। 
+नीचे दिए गए पाठ्य सामग्री (Content) को ध्यानपूर्वक पढ़ें और उसी के आधार पर 20 बहुत कठिन, विश्लेषणात्मक (Hard Level) बहुविकल्पीय प्रश्न (MCQs) हिंदी में तैयार करें।
+
+नियम:
+1. प्रश्न और चारों विकल्प पाठ्य सामग्री पर आधारित होने चाहिए।
+2. प्रत्येक प्रश्न में 4 विकल्प होने चाहिए।
+3. केवल और केवल शुद्ध JSON Format (Object) में आउटपुट दें, कोई अतिरिक्त टेक्स्ट या मार्कडाउन (```json) न लिखें।
+
+JSON संरचना:
+{{
+  "quizzes": [
+    {{
+      "question": "प्रश्न यहाँ लिखें (अधिकतम 250 अक्षर)",
+      "options": ["विकल्प 1", "विकल्प 2", "विकल्प 3", "विकल्प 4"],
+      "correct_option_id": 0,
+      "explanation": "संक्षिप्त व्याख्या (अधिकतम 180 अक्षर)"
+    }}
+  ]
+}}
+
+सामग्री:
+{text_content[:8000]}
+"""
+
+    payload = {
+        "model": "llama-3.3-70b-versatile",
+        "messages": [
+            {"role": "system", "content": "You are a professional exam quiz generator. Output ONLY a valid JSON object."},
+            {"role": "user", "content": prompt}
+        ],
+        "response_format": {"type": "json_object"},
+        "temperature": 0.4
+    }
+
+    response = requests.post(url, headers=headers, json=payload, timeout=120)
+    if response.status_code == 200:
+        res_json = response.json()
+        content = res_json["choices"][0]["message"]["content"]
+        data = json.loads(content)
+        return data.get("quizzes", [])
+    else:
+        raise Exception(f"Groq API Error {response.status_code}: {response.text}")
+
+@bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "✅ AWS Server पर 6-API बॉट 24×7 लाइव है! कृपया अपनी PDF या DOCX फ़ाइल भेजें।")
+    bot.reply_to(message, "नमस्ते! मुझे कोई भी PDF या DOCX फ़ाइल भेजें, मैं Groq AI की मदद से 20 कठिन क्विज़ बनाकर सीधे चैनल पर पोस्ट कर दूँगा।")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        bot.reply_to(message, "⏳ फ़ाइल मिल गई है। 20 प्रश्न बनाए जा रहे हैं, कृपया 15-20 सेकंड प्रतीक्षा करें...")
-        
+        file_name = message.document.file_name.lower()
+        if not (file_name.endswith('.pdf') or file_name.endswith('.docx')):
+            bot.reply_to(message, "कृपया केवल PDF या DOCX फ़ाइल भेजें।")
+            return
+
+        status_msg = bot.reply_to(message, "⏳ फ़ाइल डाउनलोड की जा रही है...")
+
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
-        
-        file_ext = ".pdf" if message.document.file_name.endswith('.pdf') else ".docx"
-        file_path = f"temp{file_ext}"
-        
-        with open(file_path, 'wb') as new_file:
+
+        local_path = f"temp_{int(time.time())}_{message.document.file_name}"
+        with open(local_path, 'wb') as new_file:
             new_file.write(downloaded_file)
-            
-        text = extract_text(file_path)
-        raw_quiz = generate_quiz_data(text)
-        quizzes = parse_quiz_data(raw_quiz)
+
+        bot.edit_message_text("📖 फ़ाइल पढ़ी जा रही है...", chat_id=message.chat.id, message_id=status_msg.message_id)
         
-        if not quizzes:
-            bot.reply_to(message, "❌ इस फ़ाइल से प्रश्न नहीं बन पाए।")
+        if local_path.lower().endswith('.pdf'):
+            text = extract_text_from_pdf(local_path)
+        else:
+            text = extract_text_from_docx(local_path)
+
+        if os.path.exists(local_path):
+            os.remove(local_path)
+
+        if len(text.strip()) < 50:
+            bot.edit_message_text("❌ फ़ाइल में पर्याप्त टेक्स्ट नहीं मिला।", chat_id=message.chat.id, message_id=status_msg.message_id)
             return
-            
-        bot.reply_to(message, f"✅ कुल {len(quizzes)} प्रश्न तैयार! अब 30-30 सेकंड के अंतराल पर चैनल में पोस्ट हो रहे हैं।")
-        
-        threading.Thread(target=send_quizzes_background, args=(message, quizzes)).start()
-        
+
+        bot.edit_message_text("⚡ Groq AI से 20 कठिन प्रश्न बनाए जा रहे हैं...", chat_id=message.chat.id, message_id=status_msg.message_id)
+
+        quizzes = generate_quiz_with_groq(text)
+
+        if not quizzes:
+            bot.edit_message_text("❌ प्रश्न तैयार नहीं हो सके। कृपया दोबारा प्रयास करें।", chat_id=message.chat.id, message_id=status_msg.message_id)
+            return
+
+        bot.edit_message_text(f"✅ {len(quizzes)} प्रश्न तैयार! अब 30-30 सेकंड के अंतराल में चैनल पर पोस्ट किए जा रहे हैं...", chat_id=message.chat.id, message_id=status_msg.message_id)
+
+        for i, q in enumerate(quizzes):
+            try:
+                question = str(q.get("question", ""))[:255]
+                options = [str(opt)[:100] for opt in q.get("options", [])][:4]
+                correct_id = int(q.get("correct_option_id", 0))
+                explanation = str(q.get("explanation", ""))[:190]
+
+                if len(options) >= 2:
+                    bot.send_poll(
+                        chat_id=CHANNEL_ID,
+                        question=f"Q{i+1}. {question}",
+                        options=options,
+                        type='quiz',
+                        correct_option_id=correct_id,
+                        explanation=explanation,
+                        is_anonymous=False
+                    )
+                    time.sleep(30)
+            except Exception as pe:
+                print(f"Poll Error on Q{i+1}: {pe}")
+                time.sleep(5)
+
+        bot.send_message(message.chat.id, "🎉 सभी प्रश्न चैनल पर सफलतापूर्वक पोस्ट हो चुके हैं!")
+
     except Exception as e:
+        print(f"Error: {e}")
         bot.reply_to(message, f"❌ एरर: {e}")
 
-# --- MAIN EXECUTION ---
-if __name__ == "__main__":
-    print("Bot started on AWS...")
-    try:
-        bot.remove_webhook()
-        time.sleep(2)
-    except:
-        pass
-
-    while True:
-        try:
-            bot.polling(none_stop=True, skip_pending=True, timeout=20)
-        except Exception as e:
-            print(f"Polling error: {e}")
-            time.sleep(5)
-            
+print("Bot started on AWS with Groq AI...")
+bot.infinity_polling()
+        
