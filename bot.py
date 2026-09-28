@@ -9,7 +9,7 @@ import time
 import json
 import random
 
-# --- 6 API KEYS SETUP ---
+# --- 6 API KEYS SETUP (Render Environment Variables se) ---
 API_KEYS = [
     os.environ.get("API_KEY_1"),
     os.environ.get("API_KEY_2"),
@@ -19,7 +19,7 @@ API_KEYS = [
     os.environ.get("API_KEY_6")
 ]
 
-# खाली Keys को हटा दें
+# Khali keys ko hata dein
 API_KEYS = [key for key in API_KEYS if key is not None and key.strip() != ""]
 
 # Telegram Tokens
@@ -55,13 +55,11 @@ def generate_quiz_data(text):
     if not API_KEYS:
         raise Exception("API keys not found in Render Environment!")
         
-    # Keys को शफ़ल करें (ताकि हर बार अलग क्रम में ट्राई करे)
     keys_to_try = API_KEYS.copy()
     random.shuffle(keys_to_try)
     
     last_error = None
     
-    # स्मार्ट लूप: एक Key फेल हो तो दूसरी ट्राई करो
     for current_key in keys_to_try:
         try:
             genai.configure(api_key=current_key)
@@ -71,27 +69,27 @@ def generate_quiz_data(text):
             You are an Expert Quiz Master and Competitive Exam Content Creator. 
             Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided by the user.
 
-            RULES:
-            1. Base Content: Create questions ONLY from the provided text/document.
-            2. Difficulty Level: Hard (Include Conceptual, Match the following, and Analytical questions).
-            3. Length Limit (CRITICAL): Telegram has strict length limits. The "question" text MUST be concise and UNDER 250 characters. Keep options under 80 characters, and solutions under 150 characters.
+            CRITICAL INSTRUCTIONS FOR ACCURACY:
+            1. Base Content: Create questions ONLY from the provided text. Do not invent information.
+            2. Difficulty: Hard (Include Conceptual, Statement-Based, and Analytical questions).
+            3. Question Length: Question text MUST be concise and UNDER 250 characters. Options under 80 characters.
             4. Language: Hindi.
-            5. Question Count: Generate exactly 20 questions.
+            5. Question Count: Generate exactly 20 questions (or as many as possible).
             6. Options: Provide exactly 4 options (A, B, C, D) for each question.
-            7. Correct Answer: Only one option must be correct.
-            8. Solution: Provide a brief, logical explanation for the correct answer.
-            9. STRICT OUTPUT FORMAT: Return ONLY a valid JSON array.
+            7. Correct Answer Randomization (CRUCIAL): You MUST distribute the correct answers randomly among A, B, C, and D. DO NOT make 'A' the correct answer for every question. The "answer" field MUST strictly match the key (A, B, C, or D) of the correct option.
+            8. Solution Accuracy: The "solution" MUST clearly explain WHY the chosen option is correct based on the provided text. Do not provide generic explanations.
+            9. Output Format: Return ONLY a valid JSON array.
 
             JSON FORMAT TEMPLATE:
             [
               {{
                 "question": "प्रश्न यहाँ लिखें?",
                 "A": "पहला विकल्प",
-                "B": "दूसरा विकल्प",
+                "B": "दूसरा विकल्प (सही)",
                 "C": "तीसरा विकल्प",
                 "D": "चौथा विकल्प",
-                "answer": "A",
-                "solution": "यहाँ विस्तृत समाधान लिखें।",
+                "answer": "B",
+                "solution": "यहाँ विस्तृत समाधान लिखें जो यह बताए कि B क्यों सही है।",
                 "positive_marks": "2",
                 "negative_marks": "0.66"
               }}
@@ -101,20 +99,17 @@ def generate_quiz_data(text):
             """
             
             response = model.generate_content(prompt)
-            return response.text # अगर सफल हुआ, तो टेक्स्ट वापस भेजें और बाहर निकलें
+            return response.text 
             
         except Exception as e:
             last_error = e
-            # अगर एरर लिमिट (429) का है, तो अगली Key ट्राई करो
             if "429" in str(e) or "quota" in str(e).lower():
                 print(f"Key failed with Quota Exceeded. Trying next key...")
                 continue
             else:
-                # अगर कोई दूसरी समस्या है, तो रोक दो
                 raise e
                 
-    # अगर लूप खत्म हो गया और सारी 6 Keys फेल हो गईं
-    raise Exception("सारी 6 API Keys का Quota खत्म हो चुका है! कृपया 24 घंटे इंतज़ार करें या नई Keys डालें।")
+    raise Exception("Saari 6 API Keys ka Quota khatam ho chuka hai! Kripya 24 ghante wait karein ya nayi Keys dalein.")
 
 def parse_quiz_data(raw_data):
     quizzes = []
@@ -204,14 +199,13 @@ def handle_docs(message):
         threading.Thread(target=send_quizzes_background, args=(message, quizzes)).start()
         
     except Exception as e:
-        # अगर सारी Keys फेल हो जाएं, तब यह एरर आएगा
-        bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई: {e}")
+        bot.reply_to(message, f"❌ Technical Error: {e}")
 
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
     
-    print("Bot chalu ho gaya h (with Smart Auto-Switch APIs)...")
+    print("Bot chalu ho gaya h (with Smart Auto-Switch APIs & Fixed Prompt)...")
     
     try:
         bot.remove_webhook()
