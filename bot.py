@@ -8,6 +8,7 @@ import textwrap
 from flask import Flask
 import threading
 import time
+import urllib.request  # फॉन्ट डाउनलोड करने के लिए नया मॉड्यूल
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -17,7 +18,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 
-# Google द्वारा सुझाया गया बिल्कुल नया मॉडल
+# Google द्वारा सुझाया गया मॉडल
 model = genai.GenerativeModel('gemini-3.8-flash')
 
 # --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
@@ -89,21 +90,32 @@ def parse_quiz_data(raw_data):
             
     return quiz
 
-# --- इमेज बैनर बनाने का फ़ंक्शन ---
+# --- इमेज बैनर बनाने का फ़ंक्शन (ऑटो-फॉन्ट डाउनलोड के साथ) ---
 def create_banner(question_text):
+    font_path = "Mukta-Regular.ttf"
+    
+    # अगर फॉन्ट फाइल मौजूद नहीं है, तो उसे इंटरनेट से अपने आप डाउनलोड करें
+    if not os.path.exists(font_path):
+        try:
+            print("फॉन्ट डाउनलोड हो रहा है...")
+            url = "https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Regular.ttf"
+            urllib.request.urlretrieve(url, font_path)
+        except Exception as e:
+            print(f"Font download error: {e}")
+
     img = Image.new('RGB', (800, 400), color=(41, 128, 185)) 
     d = ImageDraw.Draw(img)
     
     try:
-        font = ImageFont.truetype("Mukta-Regular.ttf", 35)
-    except:
-        font = ImageFont.load_default()
+        # अब यह नया डाउनलोड किया हुआ फॉन्ट इस्तेमाल करेगा
+        font = ImageFont.truetype(font_path, 35)
+        d.text((50, 50), "📚 आज का महत्वपूर्ण प्रश्न", fill=(255, 255, 0), font=font)
+        wrapped_text = textwrap.fill(question_text, width=45)
+        d.text((50, 120), wrapped_text, fill=(255, 255, 255), font=font)
+    except Exception as e:
+        # अगर फॉन्ट में कोई भी दिक्कत आए तो क्रैश होने के बजाय बिना टेक्स्ट का बैनर बना दे
+        print(f"Text encoding error (Skipping Text): {e}")
         
-    d.text((50, 50), "📚 आज का महत्वपूर्ण प्रश्न", fill=(255, 255, 0), font=font)
-    
-    wrapped_text = textwrap.fill(question_text, width=45)
-    d.text((50, 120), wrapped_text, fill=(255, 255, 255), font=font)
-    
     banner_path = "banner.png"
     img.save(banner_path)
     return banner_path
@@ -160,4 +172,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
-    
