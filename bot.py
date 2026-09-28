@@ -41,7 +41,7 @@ def extract_text(file_path):
             text += para.text + "\n"
     return text
 
-# --- AI से JSON फॉर्मेट में क्विज़ निकालने का फ़ंक्शन ---
+# --- AI से JSON फॉर्मेट में 20 क्विज़ निकालने का फ़ंक्शन ---
 def generate_quiz_data(text):
     prompt = f"""
     You are an Expert Quiz Master and Competitive Exam Content Creator. 
@@ -49,18 +49,19 @@ def generate_quiz_data(text):
 
     RULES:
     1. Base Content: Create questions ONLY from the provided text/document.
-    2. Difficulty Level: Hard (Include Conceptual, Statement-Based, Assertion-Reasoning, Match the following, and Analytical questions).
-    3. Language: Hindi.
-    4. Question Count: Generate exactly 5 questions (or as many as possible if content is less).
-    5. Options: Provide exactly 4 options (A, B, C, D) for each question.
-    6. Correct Answer: Only one option must be correct. Randomize the correct option.
-    7. Solution: Provide a brief, logical explanation for the correct answer.
-    8. STRICT OUTPUT FORMAT: You MUST return the output ONLY as a valid JSON array. Do not wrap the output in markdown code blocks (like ```json). Do not add any greetings, introductory text, or concluding remarks. Just output the raw JSON array.
+    2. Difficulty Level: Hard (Include Conceptual, Match the following, and Analytical questions).
+    3. Length Limit (CRITICAL): Telegram has strict length limits. The "question" text MUST be concise and UNDER 250 characters. DO NOT write very long paragraphs in the question. Keep options under 80 characters, and solutions under 150 characters.
+    4. Language: Hindi.
+    5. Question Count: Generate exactly 20 questions (or as many as possible if the content is short).
+    6. Options: Provide exactly 4 options (A, B, C, D) for each question.
+    7. Correct Answer: Only one option must be correct. Randomize the correct option.
+    8. Solution: Provide a brief, logical explanation for the correct answer.
+    9. STRICT OUTPUT FORMAT: You MUST return the output ONLY as a valid JSON array. Do not wrap the output in markdown code blocks (like ```json). Just output the raw JSON array.
 
     JSON FORMAT TEMPLATE:
     [
       {{
-        "question": "प्रश्न यहाँ लिखें?",
+        "question": "प्रश्न यहाँ लिखें? (ध्यान रहे, बहुत लंबा न हो)",
         "A": "पहला विकल्प",
         "B": "दूसरा विकल्प",
         "C": "तीसरा विकल्प",
@@ -72,7 +73,7 @@ def generate_quiz_data(text):
       }}
     ]
 
-    टेक्स्ट: {text[:15000]}
+    टेक्स्ट: {text[:40000]}
     """
     response = model.generate_content(prompt)
     return response.text
@@ -115,13 +116,13 @@ def parse_quiz_data(raw_data):
 # --- बॉट का कनेक्शन चेक करने के लिए /start कमांड ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "✅ मैं बिल्कुल सही तरीके से चालू हूँ! कृपया मुझे अपनी PDF या DOCX फ़ाइल भेजें।")
+    bot.reply_to(message, "✅ मैं बिल्कुल सही तरीके से चालू हूँ! कृपया मुझे अपनी PDF या DOCX फ़ाइल भेजें (20 सवालों के लिए)।")
 
 # --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        bot.reply_to(message, "फ़ाइल प्राप्त हुई। हार्ड-लेवल (Hard-Level) प्रश्न तैयार किए जा रहे हैं, कृपया प्रतीक्षा करें...")
+        bot.reply_to(message, "फ़ाइल प्राप्त हुई। 20 हार्ड-लेवल (Hard-Level) प्रश्न तैयार किए जा रहे हैं, इसमें थोड़ा समय लग सकता है, कृपया प्रतीक्षा करें...")
         
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -143,6 +144,7 @@ def handle_docs(message):
         bot.reply_to(message, f"✅ कुल {len(quizzes)} हार्ड-लेवल प्रश्न बने हैं। अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल पर पोस्ट होंगे!")
         
         for index, quiz_data in enumerate(quizzes):
+            # सेफ्टी लेयर बरकरार रखी है, लेकिन अब AI खुद ही छोटे प्रश्न भेजेगा
             safe_question = quiz_data['question'][:290] 
             safe_options = [opt[:95] for opt in quiz_data['options']]
             safe_explanation = quiz_data['solution'][:195]
@@ -174,7 +176,6 @@ if __name__ == "__main__":
     
     print("बॉट चालू हो गया है...")
     
-    # कनेक्शन फिक्स: Webhook को लूप के बाहर हटाया गया है
     try:
         bot.remove_webhook()
         time.sleep(2)
@@ -187,3 +188,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
+    
