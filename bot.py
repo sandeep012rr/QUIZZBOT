@@ -6,6 +6,7 @@ import os
 from flask import Flask
 import threading
 import time
+import json  # JSON डेटा को पढ़ने के लिए नया मॉड्यूल
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -21,12 +22,12 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Telegram Quiz Bot is Running 24/7!"
+    return "✅ Telegram JSON Quiz Bot is Running 24/7!"
 
 def run_server():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-# --- PDF/DOCX se text nikalne ka function ---
+# --- PDF/DOCX से टेक्स्ट निकालने का फ़ंक्शन ---
 def extract_text(file_path):
     text = ""
     if file_path.endswith('.pdf'):
@@ -40,74 +41,91 @@ def extract_text(file_path):
             text += para.text + "\n"
     return text
 
-# --- AI se sabhi quiz nikalne ka function ---
+# --- AI से JSON फॉर्मेट में क्विज़ निकालने का फ़ंक्शन ---
 def generate_quiz_data(text):
+    # f-string में JSON ब्रैकेट्स को {{ और }} लिखा जाता है
     prompt = f"""
-    नीचे दिए गए टेक्स्ट को पढ़ें और उसमें से जितने भी बहुविकल्पीय प्रश्न (MCQ) बन सकते हैं या दिए गए हैं, वे सभी निकालें।
-    हर प्रश्न को एक दूसरे से अलग करने के लिए बीच में '###' लिखें।
-    आउटपुट बिल्कुल इसी फॉर्मेट में होना चाहिए (कोई बोल्ड या एक्स्ट्रा टेक्स्ट न लिखें):
+    You are an Expert Quiz Master and Competitive Exam Content Creator. 
+    Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided by the user.
 
-    Question: [प्रश्न लिखें, अधिकतम 250 अक्षरों में]
-    A: [पहला विकल्प, अधिकतम 80 अक्षरों में]
-    B: [दूसरा विकल्प, अधिकतम 80 अक्षरों में]
-    C: [तीसरा विकल्प, अधिकतम 80 अक्षरों में]
-    D: [चौथा विकल्प, अधिकतम 80 अक्षरों में]
-    Answer: [A, B, C, या D]
-    Solution: [सही उत्तर का कारण, अधिकतम 150 अक्षरों में]
-    ###
-    Question: [अगला प्रश्न]
-    ...
+    RULES:
+    1. Base Content: Create questions ONLY from the provided text/document.
+    2. Difficulty Level: Hard (Include Conceptual, Statement-Based, Assertion-Reasoning, Match the following, and Analytical questions).
+    3. Language: Hindi.
+    4. Question Count: Generate exactly 5 questions (or as many as possible if content is less).
+    5. Options: Provide exactly 4 options (A, B, C, D) for each question.
+    6. Correct Answer: Only one option must be correct. Randomize the correct option.
+    7. Solution: Provide a brief, logical explanation for the correct answer.
+    8. STRICT OUTPUT FORMAT: You MUST return the output ONLY as a valid JSON array. Do not wrap the output in markdown code blocks (like ```json). Do not add any greetings, introductory text, or concluding remarks. Just output the raw JSON array.
+
+    JSON FORMAT TEMPLATE:
+    [
+      {{
+        "question": "प्रश्न यहाँ लिखें?",
+        "A": "पहला विकल्प",
+        "B": "दूसरा विकल्प",
+        "C": "तीसरा विकल्प",
+        "D": "चौथा विकल्प",
+        "answer": "A",
+        "solution": "यहाँ विस्तृत समाधान लिखें।",
+        "positive_marks": "2",
+        "negative_marks": "0.66"
+      }}
+    ]
 
     टेक्स्ट: {text[:15000]}
     """
     response = model.generate_content(prompt)
     return response.text
 
-# --- Multiple quiz data ko alag karne ka smart function ---
+# --- JSON डेटा को डिकोड करने का नया और स्मार्ट फ़ंक्शन ---
 def parse_quiz_data(raw_data):
     quizzes = []
-    blocks = raw_data.strip().split('###')
-    
-    for block in blocks:
-        if not block.strip():
-            continue
-            
-        lines = block.strip().split('\n')
-        quiz = {"options": [], "question": "", "correct_option_id": 0, "solution": "सही उत्तर चुनने के लिए धन्यवाद!"}
+    try:
+        # अगर AI गलती से ```json लगाकर भेज दे, तो उसे हटा दें
+        clean_data = raw_data.strip()
+        if clean_data.startswith("```json"):
+            clean_data = clean_data[7:]
+        if clean_data.startswith("```"):
+            clean_data = clean_data[3:]
+        if clean_data.endswith("```"):
+            clean_data = clean_data[:-3]
+        clean_data = clean_data.strip()
         
-        for line in lines:
-            line = line.strip().replace("**", "") 
-            line_lower = line.lower()
+        # JSON को पायथन लिस्ट में बदलें
+        json_data = json.loads(clean_data)
+        
+        for item in json_data:
+            quiz = {
+                "question": item.get("question", "प्रश्न जनरेट नहीं हो पाया"),
+                "options": [
+                    str(item.get("A", "विकल्प A")),
+                    str(item.get("B", "विकल्प B")),
+                    str(item.get("C", "विकल्प C")),
+                    str(item.get("D", "विकल्प D"))
+                ],
+                "solution": item.get("solution", "सही उत्तर चुनने के लिए धन्यवाद!")
+            }
             
-            if line_lower.startswith("question:"):
-                quiz['question'] = line[9:].strip()
-            elif line_lower.startswith("a:") or line_lower.startswith("(a)") or line_lower.startswith("a."):
-                quiz['options'].append(line[2:].replace(")", "").strip())
-            elif line_lower.startswith("b:") or line_lower.startswith("(b)") or line_lower.startswith("b."):
-                quiz['options'].append(line[2:].replace(")", "").strip())
-            elif line_lower.startswith("c:") or line_lower.startswith("(c)") or line_lower.startswith("c."):
-                quiz['options'].append(line[2:].replace(")", "").strip())
-            elif line_lower.startswith("d:") or line_lower.startswith("(d)") or line_lower.startswith("d."):
-                quiz['options'].append(line[2:].replace(")", "").strip())
-            elif line_lower.startswith("answer:"):
-                ans = line_lower.replace("answer:", "").strip()
-                if 'a' in ans: quiz['correct_option_id'] = 0
-                elif 'b' in ans: quiz['correct_option_id'] = 1
-                elif 'c' in ans: quiz['correct_option_id'] = 2
-                elif 'd' in ans: quiz['correct_option_id'] = 3
-            elif line_lower.startswith("solution:"):
-                quiz['solution'] = line[9:].strip()
+            # सही उत्तर को 0, 1, 2, 3 में बदलें
+            ans = str(item.get("answer", "A")).strip().upper()
+            ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
+            quiz['correct_option_id'] = ans_map.get(ans, 0)
+            
+            if len(quiz['options']) >= 2 and quiz['question']:
+                quizzes.append(quiz)
                 
-        if len(quiz['options']) >= 2 and quiz['question']:
-            quizzes.append(quiz)
-            
+    except Exception as e:
+        print(f"JSON Parsing Error: {e}")
+        print(f"Raw Output was: {raw_data}")
+        
     return quizzes
 
-# --- Telegram par file bhejne ka hissa (Sirf Quiz, 30 sec gap) ---
+# --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा (बिना बैनर के, 30 सेकंड गैप) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        bot.reply_to(message, "फ़ाइल प्राप्त हुई। सभी प्रश्न तैयार किए जा रहे हैं, कृपया प्रतीक्षा करें...")
+        bot.reply_to(message, "फ़ाइल प्राप्त हुई। हार्ड-लेवल (Hard-Level) प्रश्न तैयार किए जा रहे हैं, कृपया प्रतीक्षा करें...")
         
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -123,21 +141,21 @@ def handle_docs(message):
         quizzes = parse_quiz_data(raw_quiz)
         
         if not quizzes:
-            bot.reply_to(message, "इस फ़ाइल में कोई प्रश्न नहीं मिल पाया। कृपया दूसरी फ़ाइल भेजें।")
+            bot.reply_to(message, "इस फ़ाइल से प्रश्न नहीं बन पाए या टेक्स्ट बहुत कम है। कृपया दूसरी फ़ाइल भेजें।")
             return
             
-        bot.reply_to(message, f"✅ कुल {len(quizzes)} प्रश्न मिले हैं। अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल पर पोस्ट होंगे!")
+        bot.reply_to(message, f"✅ कुल {len(quizzes)} हार्ड-लेवल प्रश्न बने हैं। अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल पर पोस्ट होंगे!")
         
         for index, quiz_data in enumerate(quizzes):
-            # Telegram Limits Safety
+            # टेलीग्राम लिमिट सेफ्टी (अक्षरों की सीमा)
             safe_question = quiz_data['question'][:290] 
             safe_options = [opt[:95] for opt in quiz_data['options']]
             safe_explanation = quiz_data['solution'][:195]
             
-            # Question number ka simple message bhejna
-            bot.send_message(CHANNEL_ID, f"📝 **प्रश्न {index + 1}/{len(quizzes)}**", parse_mode="Markdown")
+            # क्वेश्चन नंबर भेजना
+            bot.send_message(CHANNEL_ID, f"📝 **कठिन प्रश्न {index + 1}/{len(quizzes)}**", parse_mode="Markdown")
             
-            # Direct Poll bhejna
+            # पोल भेजना
             bot.send_poll(
                 chat_id=CHANNEL_ID,
                 question=safe_question,
@@ -148,16 +166,16 @@ def handle_docs(message):
                 is_anonymous=True
             )
             
-            # Agar ye aakhiri prashn nahi hai, toh 30 second ruke
+            # 30 सेकंड का गैप
             if index < len(quizzes) - 1:
                 time.sleep(30)
                 
-        bot.reply_to(message, f"🎉 सभी {len(quizzes)} क्विज़ सफलतापूर्वक पोस्ट कर दिए गए हैं!")
+        bot.reply_to(message, f"🎉 सभी {len(quizzes)} कठिन क्विज़ सफलतापूर्वक पोस्ट कर दिए गए हैं!")
         
     except Exception as e:
         bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई: {e}")
 
-# --- Bot aur Web Server ---
+# --- बॉट और वेब सर्वर ---
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
