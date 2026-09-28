@@ -10,13 +10,12 @@ import threading
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("") 
+CHANNEL_ID = os.environ.get("CHANNEL_ID")
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-pro')
-
+model = genai.GenerativeModel('gemini-1.5-pro')
 # --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
 app = Flask(__name__)
 
