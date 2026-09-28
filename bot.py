@@ -8,7 +8,7 @@ import textwrap
 from flask import Flask
 import threading
 import time
-import urllib.request  # फॉन्ट डाउनलोड करने के लिए नया मॉड्यूल
+import urllib.request
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -17,11 +17,9 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
-
-# Google द्वारा सुझाया गया मॉडल
 model = genai.GenerativeModel('gemini-3.8-flash')
 
-# --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
+# --- Flask Web Server ---
 app = Flask(__name__)
 
 @app.route('/')
@@ -49,82 +47,87 @@ def extract_text(file_path):
 def generate_quiz_data(text):
     prompt = f"""
     नीचे दिए गए टेक्स्ट को पढ़ें और उसमें से 1 बेहतरीन प्रतियोगी परीक्षा स्तर का बहुविकल्पीय प्रश्न (MCQ) बनाएँ।
-    आउटपुट बिल्कुल इसी फॉर्मेट में होना चाहिए, इसके अलावा कोई भी अतिरिक्त शब्द न लिखें:
+    आउटपुट बिल्कुल इसी फॉर्मेट में होना चाहिए (कोई बोल्ड या एक्स्ट्रा टेक्स्ट न लिखें):
 
     Question: [यहाँ प्रश्न लिखें]
-    (a) [पहला विकल्प]
-    (b) [दूसरा विकल्प]
-    (c) [तीसरा विकल्प]
-    (d) [चौथा विकल्प]
-    Answer: [a, b, c, या d]
-    Solution: [सही उत्तर का विस्तृत कारण]
+    A: [पहला विकल्प]
+    B: [दूसरा विकल्प]
+    C: [तीसरा विकल्प]
+    D: [चौथा विकल्प]
+    Answer: [A, B, C, या D]
+    Solution: [सही उत्तर का कारण]
 
     टेक्स्ट: {text[:3000]}
     """
     response = model.generate_content(prompt)
     return response.text
 
-# --- क्विज़ डेटा को अलग करने का फ़ंक्शन ---
+# --- क्विज़ डेटा को अलग करने का स्मार्ट फ़ंक्शन ---
 def parse_quiz_data(raw_data):
     lines = raw_data.strip().split('\n')
-    quiz = {"options": []}
+    quiz = {"options": [], "question": "प्रश्न जनरेट नहीं हो पाया", "correct_option_id": 0, "solution": "सही उत्तर चुनने के लिए धन्यवाद!"}
     
     for line in lines:
-        line = line.strip()
-        if line.startswith("Question:"):
-            quiz['question'] = line.replace("Question:", "").strip()
-        elif line.startswith("(a)"):
-            quiz['options'].append(line.replace("(a)", "").strip())
-        elif line.startswith("(b)"):
-            quiz['options'].append(line.replace("(b)", "").strip())
-        elif line.startswith("(c)"):
-            quiz['options'].append(line.replace("(c)", "").strip())
-        elif line.startswith("(d)"):
-            quiz['options'].append(line.replace("(d)", "").strip())
-        elif line.startswith("Answer:"):
-            ans_char = line.replace("Answer:", "").strip().lower()
-            ans_map = {'a': 0, 'b': 1, 'c': 2, 'd': 3}
-            quiz['correct_option_id'] = ans_map.get(ans_char, 0)
-        elif line.startswith("Solution:"):
-            quiz['solution'] = line.replace("Solution:", "").strip()
+        line = line.strip().replace("**", "") # एक्स्ट्रा बोल्ड मार्क्स हटा दें
+        line_lower = line.lower()
+        
+        if line_lower.startswith("question:"):
+            quiz['question'] = line[9:].strip()
+        elif line_lower.startswith("a:") or line_lower.startswith("(a)") or line_lower.startswith("a."):
+            quiz['options'].append(line[2:].replace(")", "").strip())
+        elif line_lower.startswith("b:") or line_lower.startswith("(b)") or line_lower.startswith("b."):
+            quiz['options'].append(line[2:].replace(")", "").strip())
+        elif line_lower.startswith("c:") or line_lower.startswith("(c)") or line_lower.startswith("c."):
+            quiz['options'].append(line[2:].replace(")", "").strip())
+        elif line_lower.startswith("d:") or line_lower.startswith("(d)") or line_lower.startswith("d."):
+            quiz['options'].append(line[2:].replace(")", "").strip())
+        elif line_lower.startswith("answer:"):
+            ans = line_lower.replace("answer:", "").strip()
+            if 'a' in ans: quiz['correct_option_id'] = 0
+            elif 'b' in ans: quiz['correct_option_id'] = 1
+            elif 'c' in ans: quiz['correct_option_id'] = 2
+            elif 'd' in ans: quiz['correct_option_id'] = 3
+        elif line_lower.startswith("solution:"):
+            quiz['solution'] = line[9:].strip()
             
+    # अगर किसी वजह से AI विकल्प न दे पाए, तो क्रैश होने से बचाने के लिए डिफ़ॉल्ट विकल्प
+    if len(quiz['options']) < 2:
+        quiz['options'] = ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"]
+        
     return quiz
 
-# --- इमेज बैनर बनाने का फ़ंक्शन (ऑटो-फॉन्ट डाउनलोड के साथ) ---
+# --- इमेज बैनर बनाने का फ़ंक्शन ---
 def create_banner(question_text):
     font_path = "Mukta-Regular.ttf"
     
-    # अगर फॉन्ट फाइल मौजूद नहीं है, तो उसे इंटरनेट से अपने आप डाउनलोड करें
     if not os.path.exists(font_path):
         try:
-            print("फॉन्ट डाउनलोड हो रहा है...")
             url = "https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Regular.ttf"
             urllib.request.urlretrieve(url, font_path)
         except Exception as e:
-            print(f"Font download error: {e}")
+            pass
 
     img = Image.new('RGB', (800, 400), color=(41, 128, 185)) 
     d = ImageDraw.Draw(img)
     
     try:
-        # अब यह नया डाउनलोड किया हुआ फॉन्ट इस्तेमाल करेगा
         font = ImageFont.truetype(font_path, 35)
-        d.text((50, 50), "📚 आज का महत्वपूर्ण प्रश्न", fill=(255, 255, 0), font=font)
+        # यहाँ से इमोजी हटा दिया गया है ताकि डिब्बा न दिखे
+        d.text((50, 50), "आज का महत्वपूर्ण प्रश्न", fill=(255, 255, 0), font=font)
         wrapped_text = textwrap.fill(question_text, width=45)
         d.text((50, 120), wrapped_text, fill=(255, 255, 255), font=font)
     except Exception as e:
-        # अगर फॉन्ट में कोई भी दिक्कत आए तो क्रैश होने के बजाय बिना टेक्स्ट का बैनर बना दे
-        print(f"Text encoding error (Skipping Text): {e}")
+        print(f"Font Error: {e}")
         
     banner_path = "banner.png"
     img.save(banner_path)
     return banner_path
 
-# --- जब आप टेलीग्राम पर फ़ाइल भेजेंगे तब यह चलेगा ---
+# --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        bot.reply_to(message, "फ़ाइल प्राप्त हुई। प्रश्न और बैनर तैयार किया जा रहा है...")
+        bot.reply_to(message, "फ़ाइल प्राप्त हुई। प्रश्न और क्विज़ तैयार किया जा रहा है...")
         
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -141,16 +144,18 @@ def handle_docs(message):
         
         banner_path = create_banner(quiz_data['question'])
         
+        # पहले बैनर भेजेगा
         with open(banner_path, 'rb') as photo:
             bot.send_photo(CHANNEL_ID, photo, caption="👇 **आज का क्विज़ अटेम्प्ट करें!** 👇", parse_mode="Markdown")
             
+        # उसके तुरंत बाद क्लिक करने वाला क्विज़ भेजेगा
         bot.send_poll(
             chat_id=CHANNEL_ID,
             question=quiz_data['question'],
             options=quiz_data['options'],
             type="quiz",
             correct_option_id=quiz_data['correct_option_id'],
-            explanation=quiz_data.get('solution', 'सही उत्तर चुनने के लिए धन्यवाद!'), 
+            explanation=quiz_data['solution'], 
             is_anonymous=True
         )
         
@@ -159,7 +164,7 @@ def handle_docs(message):
     except Exception as e:
         bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई: {e}")
 
-# --- बॉट और वेब सर्वर दोनों को एक साथ चलाना ---
+# --- बॉट और वेब सर्वर ---
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
@@ -172,3 +177,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
+    
