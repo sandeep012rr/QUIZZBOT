@@ -2,13 +2,10 @@ import telebot
 import PyPDF2
 import docx
 import google.generativeai as genai
-from PIL import Image, ImageDraw, ImageFont
 import os
-import textwrap
 from flask import Flask
 import threading
 import time
-import urllib.request
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -29,7 +26,7 @@ def home():
 def run_server():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-# --- PDF/DOCX से टेक्स्ट निकालने का फ़ंक्शन ---
+# --- PDF/DOCX se text nikalne ka function ---
 def extract_text(file_path):
     text = ""
     if file_path.endswith('.pdf'):
@@ -43,7 +40,7 @@ def extract_text(file_path):
             text += para.text + "\n"
     return text
 
-# --- AI से सभी क्विज़ निकालने का फ़ंक्शन ---
+# --- AI se sabhi quiz nikalne ka function ---
 def generate_quiz_data(text):
     prompt = f"""
     नीचे दिए गए टेक्स्ट को पढ़ें और उसमें से जितने भी बहुविकल्पीय प्रश्न (MCQ) बन सकते हैं या दिए गए हैं, वे सभी निकालें।
@@ -66,7 +63,7 @@ def generate_quiz_data(text):
     response = model.generate_content(prompt)
     return response.text
 
-# --- मल्टीपल क्विज़ डेटा को अलग करने का स्मार्ट फ़ंक्शन ---
+# --- Multiple quiz data ko alag karne ka smart function ---
 def parse_quiz_data(raw_data):
     quizzes = []
     blocks = raw_data.strip().split('###')
@@ -106,37 +103,11 @@ def parse_quiz_data(raw_data):
             
     return quizzes
 
-# --- इमेज बैनर बनाने का फ़ंक्शन ---
-def create_banner(question_text):
-    font_path = "Mukta-Regular.ttf"
-    
-    if not os.path.exists(font_path):
-        try:
-            url = "https://raw.githubusercontent.com/google/fonts/main/ofl/mukta/Mukta-Regular.ttf"
-            urllib.request.urlretrieve(url, font_path)
-        except Exception as e:
-            pass
-
-    img = Image.new('RGB', (800, 400), color=(41, 128, 185)) 
-    d = ImageDraw.Draw(img)
-    
-    try:
-        font = ImageFont.truetype(font_path, 35)
-        d.text((50, 50), "आज का महत्वपूर्ण प्रश्न", fill=(255, 255, 0), font=font)
-        wrapped_text = textwrap.fill(question_text, width=45)
-        d.text((50, 120), wrapped_text, fill=(255, 255, 255), font=font)
-    except Exception as e:
-        print(f"Font Error: {e}")
-        
-    banner_path = "banner.png"
-    img.save(banner_path)
-    return banner_path
-
-# --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा (30 सेकंड गैप के साथ) ---
+# --- Telegram par file bhejne ka hissa (Sirf Quiz, 30 sec gap) ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        bot.reply_to(message, "फ़ाइल प्राप्त हुई। सभी प्रश्न और बैनर तैयार किए जा रहे हैं, कृपया प्रतीक्षा करें...")
+        bot.reply_to(message, "फ़ाइल प्राप्त हुई। सभी प्रश्न तैयार किए जा रहे हैं, कृपया प्रतीक्षा करें...")
         
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -157,17 +128,16 @@ def handle_docs(message):
             
         bot.reply_to(message, f"✅ कुल {len(quizzes)} प्रश्न मिले हैं। अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल पर पोस्ट होंगे!")
         
-        # सभी सवालों को एक-एक करके लूप में पोस्ट करना
         for index, quiz_data in enumerate(quizzes):
-            banner_path = create_banner(quiz_data['question'])
-            
-            with open(banner_path, 'rb') as photo:
-                bot.send_photo(CHANNEL_ID, photo, caption=f"👇 **प्रश्न {index + 1}/{len(quizzes)} - आज का क्विज़ अटेम्प्ट करें!** 👇", parse_mode="Markdown")
-                
+            # Telegram Limits Safety
             safe_question = quiz_data['question'][:290] 
             safe_options = [opt[:95] for opt in quiz_data['options']]
             safe_explanation = quiz_data['solution'][:195]
-                
+            
+            # Question number ka simple message bhejna
+            bot.send_message(CHANNEL_ID, f"📝 **प्रश्न {index + 1}/{len(quizzes)}**", parse_mode="Markdown")
+            
+            # Direct Poll bhejna
             bot.send_poll(
                 chat_id=CHANNEL_ID,
                 question=safe_question,
@@ -178,7 +148,7 @@ def handle_docs(message):
                 is_anonymous=True
             )
             
-            # अगर यह आखिरी प्रश्न नहीं है, तो 30 सेकंड का ब्रेक लें
+            # Agar ye aakhiri prashn nahi hai, toh 30 second ruke
             if index < len(quizzes) - 1:
                 time.sleep(30)
                 
@@ -187,7 +157,7 @@ def handle_docs(message):
     except Exception as e:
         bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई: {e}")
 
-# --- बॉट और वेब सर्वर ---
+# --- Bot aur Web Server ---
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
@@ -200,4 +170,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
-    
