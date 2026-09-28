@@ -1,28 +1,25 @@
 import telebot
 import PyPDF2
 import docx
-import google.generativeai as genai
 import os
 from flask import Flask
 import threading
 import time
 import json
 import random
+import requests
 
-# --- 6 API KEYS SETUP (Render Environment Variables se) ---
+# --- आपकी 6 असली API KEYS (100% CONFIGURED) ---
 API_KEYS = [
-    os.environ.get("API_KEY_1"),
-    os.environ.get("API_KEY_2"),
-    os.environ.get("API_KEY_3"),
-    os.environ.get("API_KEY_4"),
-    os.environ.get("API_KEY_5"),
-    os.environ.get("API_KEY_6")
+    "AQ.Ab8RN6KKI3tKaKz6G_RgKKaS7uZdK4HdbyIkvRwA4qS2C8qDAQ",
+    "AQ.Ab8RN6KWPbEqUjomMQUyR-tXUIHtPJg4pm_51lncMflOxtZpEA",
+    "AQ.Ab8RN6IJdv3mP5IC75nbcXvAjp1VPm3wWJVulrszE2-zaa-ynQ",
+    "AQ.Ab8RN6JP1xU6_471YqfIldY4oZDb439bVrwFUCprvl1obtOJ1g",
+    "AQ.Ab8RN6IsxSCwjhcuK0ncXbeCInko-fn-YXZIQN6PRYjV9Xpz8A",
+    "AQ.Ab8RN6I2cta-zcHIuJa54vuXv6Vkld4YY2-s5lQDS_8cK8ovxw"
 ]
 
-# Khali keys ko hata dein
-API_KEYS = [key for key in API_KEYS if key is not None and key.strip() != ""]
-
-# Telegram Tokens
+# Telegram Tokens (Render Environment से)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
@@ -33,84 +30,99 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return f"✅ Telegram 6-API Quiz Bot is Running 24/7! (Active Keys: {len(API_KEYS)})"
+    return f"✅ Telegram 6-API Quiz Bot is Running 24/7! (Keys Loaded: {len(API_KEYS)})"
 
 def run_server():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
+# --- PDF/DOCX से टेक्स्ट निकालने का फ़ंक्शन ---
 def extract_text(file_path):
     text = ""
     if file_path.endswith('.pdf'):
         with open(file_path, 'rb') as file:
             reader = PyPDF2.PdfReader(file)
             for page in reader.pages:
-                text += page.extract_text() + "\n"
+                extracted = page.extract_text()
+                if extracted:
+                    text += extracted + "\n"
     elif file_path.endswith('.docx'):
         doc = docx.Document(file_path)
         for para in doc.paragraphs:
-            text += para.text + "\n"
+            if para.text:
+                text += para.text + "\n"
     return text
 
+# --- Gemini REST API से क्विज़ जनरेट करना (नई AQ. Keys के लिए फुलप्रूफ) ---
+def call_gemini_api(prompt, key):
+    # gemini-2.5-flash REST endpoint जो AQ. format को सीधे सपोर्ट करता है
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [
+            {
+                "parts": [{"text": prompt}]
+            }
+        ]
+    }
+    
+    response = requests.post(url, headers=headers, json=payload, timeout=90)
+    
+    if response.status_code == 200:
+        data = response.json()
+        return data["candidates"][0]["content"]["parts"][0]["text"]
+    elif response.status_code == 429:
+        raise Exception("429 Quota Exceeded")
+    else:
+        raise Exception(f"API Error {response.status_code}: {response.text}")
+
 def generate_quiz_data(text):
-    if not API_KEYS:
-        raise Exception("API keys not found in Render Environment!")
-        
     keys_to_try = API_KEYS.copy()
-    random.shuffle(keys_to_try)
+    random.shuffle(keys_to_try) # हर बार अलग Key पहले ट्राई होगी
     
-    last_error = None
+    prompt = f"""
+    You are an Expert Quiz Master and Competitive Exam Content Creator. 
+    Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided.
+
+    CRITICAL INSTRUCTIONS FOR ACCURACY:
+    1. Base Content: Create questions ONLY from the provided text. Do not invent facts.
+    2. Difficulty: Hard (Include Conceptual, Statement-Based, and Analytical questions).
+    3. Question Length: Question text MUST be concise and UNDER 250 characters. Options under 80 characters.
+    4. Language: Hindi.
+    5. Question Count: Generate exactly 20 questions (or as many as the text allows).
+    6. Correct Answer Randomization (CRUCIAL): Distribute the correct answers evenly and randomly among A, B, C, and D. DO NOT make 'A' the correct answer for every question.
+    7. Solution Accuracy: The "solution" MUST clearly explain WHY the chosen option is correct based on the text.
+    8. Output Format: Return ONLY a valid raw JSON array without any markdown formatting or explanations.
+
+    JSON FORMAT TEMPLATE:
+    [
+      {{
+        "question": "प्रश्न यहाँ लिखें?",
+        "A": "पहला विकल्प",
+        "B": "दूसरा विकल्प",
+        "C": "तीसरा विकल्प",
+        "D": "चौथा विकल्प",
+        "answer": "B",
+        "solution": "यहाँ विस्तृत समाधान लिखें।",
+        "positive_marks": "2",
+        "negative_marks": "0.66"
+      }}
+    ]
+
+    टेक्स्ट: {text[:40000]}
+    """
     
-    for current_key in keys_to_try:
+    last_err = None
+    for key in keys_to_try:
         try:
-            genai.configure(api_key=current_key)
-            model = genai.GenerativeModel('gemini-3.8-flash')
-            
-            prompt = f"""
-            You are an Expert Quiz Master and Competitive Exam Content Creator. 
-            Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided by the user.
-
-            CRITICAL INSTRUCTIONS FOR ACCURACY:
-            1. Base Content: Create questions ONLY from the provided text. Do not invent information.
-            2. Difficulty: Hard (Include Conceptual, Statement-Based, and Analytical questions).
-            3. Question Length: Question text MUST be concise and UNDER 250 characters. Options under 80 characters.
-            4. Language: Hindi.
-            5. Question Count: Generate exactly 20 questions (or as many as possible).
-            6. Options: Provide exactly 4 options (A, B, C, D) for each question.
-            7. Correct Answer Randomization (CRUCIAL): You MUST distribute the correct answers randomly among A, B, C, and D. DO NOT make 'A' the correct answer for every question. The "answer" field MUST strictly match the key (A, B, C, or D) of the correct option.
-            8. Solution Accuracy: The "solution" MUST clearly explain WHY the chosen option is correct based on the provided text. Do not provide generic explanations.
-            9. Output Format: Return ONLY a valid JSON array.
-
-            JSON FORMAT TEMPLATE:
-            [
-              {{
-                "question": "प्रश्न यहाँ लिखें?",
-                "A": "पहला विकल्प",
-                "B": "दूसरा विकल्प (सही)",
-                "C": "तीसरा विकल्प",
-                "D": "चौथा विकल्प",
-                "answer": "B",
-                "solution": "यहाँ विस्तृत समाधान लिखें जो यह बताए कि B क्यों सही है।",
-                "positive_marks": "2",
-                "negative_marks": "0.66"
-              }}
-            ]
-
-            टेक्स्ट: {text[:40000]}
-            """
-            
-            response = model.generate_content(prompt)
-            return response.text 
-            
+            return call_gemini_api(prompt, key)
         except Exception as e:
-            last_error = e
-            if "429" in str(e) or "quota" in str(e).lower():
-                print(f"Key failed with Quota Exceeded. Trying next key...")
-                continue
-            else:
-                raise e
-                
-    raise Exception("Saari 6 API Keys ka Quota khatam ho chuka hai! Kripya 24 ghante wait karein ya nayi Keys dalein.")
+            last_err = e
+            print(f"Key failed, trying next key... Error: {e}")
+            continue
+            
+    raise Exception(f"सभी 6 Keys में समस्या आई: {last_err}")
 
+# --- JSON डेटा को डिकोड करने का फ़ंक्शन ---
 def parse_quiz_data(raw_data):
     quizzes = []
     try:
@@ -131,17 +143,21 @@ def parse_quiz_data(raw_data):
                     str(item.get("C", "विकल्प C")),
                     str(item.get("D", "विकल्प D"))
                 ],
-                "solution": item.get("solution", "सही उत्तर चुनने के लिए धन्यवाद!")
+                "solution": item.get("solution", "विस्तृत व्याख्या उपलब्ध नहीं है।")
             }
+            
             ans = str(item.get("answer", "A")).strip().upper()
             ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
             quiz['correct_option_id'] = ans_map.get(ans, 0)
+            
             if len(quiz['options']) >= 2 and quiz['question']:
                 quizzes.append(quiz)
     except Exception as e:
         print(f"JSON Parsing Error: {e}")
+        
     return quizzes
 
+# --- बैकग्राउंड में क्विज़ भेजने वाला फ़ंक्शन ---
 def send_quizzes_background(message, quizzes):
     for index, quiz_data in enumerate(quizzes):
         try:
@@ -164,18 +180,19 @@ def send_quizzes_background(message, quizzes):
             if index < len(quizzes) - 1:
                 time.sleep(30)
         except Exception as e:
-            print(f"Poll bhejne me error: {e}")
+            print(f"Poll भेजने में त्रुटि: {e}")
             
-    bot.reply_to(message, f"🎉 Sabhi {len(quizzes)} questions channel par successfully post ho gaye!")
+    bot.reply_to(message, f"🎉 सभी {len(quizzes)} प्रश्न चैनल पर सफलतापूर्वक पोस्ट हो चुके हैं!")
 
+# --- टेलीग्राम बॉट कमांड्स और हैंडलर्स ---
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, f"✅ Main {len(API_KEYS)} API Keys ke smart-switch system ke sath active hu! PDF bhej dijiye.")
+    bot.reply_to(message, f"✅ बॉट 6-API Keys के साथ पूरी तरह सक्रिय है! कृपया अपनी PDF या DOCX फ़ाइल भेजें।")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
-        bot.reply_to(message, "⏳ File mil gayi h. Questions ban rahe hain, kripya wait karein...")
+        bot.reply_to(message, "⏳ फ़ाइल प्राप्त हुई। हार्ड-लेवल के 20 प्रश्न बनाए जा रहे हैं, कृपया 15-20 सेकंड प्रतीक्षा करें...")
         
         file_info = bot.get_file(message.document.file_id)
         downloaded_file = bot.download_file(file_info.file_path)
@@ -191,21 +208,23 @@ def handle_docs(message):
         quizzes = parse_quiz_data(raw_quiz)
         
         if not quizzes:
-            bot.reply_to(message, "❌ Is file se questions nahi ban paye.")
+            bot.reply_to(message, "❌ इस फ़ाइल से प्रश्न नहीं बन पाए। कृपया दूसरी फ़ाइल भेजें।")
             return
             
-        bot.reply_to(message, f"✅ Kul {len(quizzes)} questions ban gaye hain. Ab ye background me aate rahenge!")
+        bot.reply_to(message, f"✅ कुल {len(quizzes)} कठिन प्रश्न तैयार हो गए हैं! अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल में पोस्ट होना शुरू हो रहे हैं।")
         
+        # बॉट को फ्री रखने के लिए बैकग्राउंड थ्रेड
         threading.Thread(target=send_quizzes_background, args=(message, quizzes)).start()
         
     except Exception as e:
-        bot.reply_to(message, f"❌ Technical Error: {e}")
+        bot.reply_to(message, f"❌ तकनीकी त्रुटि: {e}")
 
+# --- मेन एंट्री पॉइंट ---
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
     
-    print("Bot chalu ho gaya h (with Smart Auto-Switch APIs & Fixed Prompt)...")
+    print("बॉट चालू हो गया है (All 6 AQ. Keys Active)...")
     
     try:
         bot.remove_webhook()
@@ -217,5 +236,5 @@ if __name__ == "__main__":
         try:
             bot.polling(none_stop=True, skip_pending=True, timeout=20)
         except Exception as e:
-            print(f"Error in polling: {e}")
+            print(f"Polling error: {e}")
             time.sleep(5)
