@@ -6,7 +6,7 @@ import os
 from flask import Flask
 import threading
 import time
-import json  # JSON डेटा को पढ़ने के लिए नया मॉड्यूल
+import json
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -43,7 +43,6 @@ def extract_text(file_path):
 
 # --- AI से JSON फॉर्मेट में क्विज़ निकालने का फ़ंक्शन ---
 def generate_quiz_data(text):
-    # f-string में JSON ब्रैकेट्स को {{ और }} लिखा जाता है
     prompt = f"""
     You are an Expert Quiz Master and Competitive Exam Content Creator. 
     Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided by the user.
@@ -78,21 +77,16 @@ def generate_quiz_data(text):
     response = model.generate_content(prompt)
     return response.text
 
-# --- JSON डेटा को डिकोड करने का नया और स्मार्ट फ़ंक्शन ---
+# --- JSON डेटा को डिकोड करने का स्मार्ट फ़ंक्शन ---
 def parse_quiz_data(raw_data):
     quizzes = []
     try:
-        # अगर AI गलती से ```json लगाकर भेज दे, तो उसे हटा दें
         clean_data = raw_data.strip()
-        if clean_data.startswith("```json"):
-            clean_data = clean_data[7:]
-        if clean_data.startswith("```"):
-            clean_data = clean_data[3:]
-        if clean_data.endswith("```"):
-            clean_data = clean_data[:-3]
+        if clean_data.startswith("```json"): clean_data = clean_data[7:]
+        if clean_data.startswith("```"): clean_data = clean_data[3:]
+        if clean_data.endswith("```"): clean_data = clean_data[:-3]
         clean_data = clean_data.strip()
         
-        # JSON को पायथन लिस्ट में बदलें
         json_data = json.loads(clean_data)
         
         for item in json_data:
@@ -107,21 +101,23 @@ def parse_quiz_data(raw_data):
                 "solution": item.get("solution", "सही उत्तर चुनने के लिए धन्यवाद!")
             }
             
-            # सही उत्तर को 0, 1, 2, 3 में बदलें
             ans = str(item.get("answer", "A")).strip().upper()
             ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
             quiz['correct_option_id'] = ans_map.get(ans, 0)
             
             if len(quiz['options']) >= 2 and quiz['question']:
                 quizzes.append(quiz)
-                
     except Exception as e:
         print(f"JSON Parsing Error: {e}")
-        print(f"Raw Output was: {raw_data}")
         
     return quizzes
 
-# --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा (बिना बैनर के, 30 सेकंड गैप) ---
+# --- बॉट का कनेक्शन चेक करने के लिए /start कमांड ---
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "✅ मैं बिल्कुल सही तरीके से चालू हूँ! कृपया मुझे अपनी PDF या DOCX फ़ाइल भेजें।")
+
+# --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
@@ -141,21 +137,18 @@ def handle_docs(message):
         quizzes = parse_quiz_data(raw_quiz)
         
         if not quizzes:
-            bot.reply_to(message, "इस फ़ाइल से प्रश्न नहीं बन पाए या टेक्स्ट बहुत कम है। कृपया दूसरी फ़ाइल भेजें।")
+            bot.reply_to(message, "इस फ़ाइल से प्रश्न नहीं बन पाए। कृपया दूसरी फ़ाइल भेजें।")
             return
             
         bot.reply_to(message, f"✅ कुल {len(quizzes)} हार्ड-लेवल प्रश्न बने हैं। अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल पर पोस्ट होंगे!")
         
         for index, quiz_data in enumerate(quizzes):
-            # टेलीग्राम लिमिट सेफ्टी (अक्षरों की सीमा)
             safe_question = quiz_data['question'][:290] 
             safe_options = [opt[:95] for opt in quiz_data['options']]
             safe_explanation = quiz_data['solution'][:195]
             
-            # क्वेश्चन नंबर भेजना
             bot.send_message(CHANNEL_ID, f"📝 **कठिन प्रश्न {index + 1}/{len(quizzes)}**", parse_mode="Markdown")
             
-            # पोल भेजना
             bot.send_poll(
                 chat_id=CHANNEL_ID,
                 question=safe_question,
@@ -166,7 +159,6 @@ def handle_docs(message):
                 is_anonymous=True
             )
             
-            # 30 सेकंड का गैप
             if index < len(quizzes) - 1:
                 time.sleep(30)
                 
@@ -184,7 +176,9 @@ if __name__ == "__main__":
     while True:
         try:
             bot.remove_webhook()
-            bot.polling(none_stop=True, skip_pending=True, timeout=60)
+            # timeout को 60 से 20 किया गया है ताकि कनेक्शन जल्दी रीफ्रेश हो
+            bot.polling(none_stop=True, skip_pending=True, timeout=20)
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
+                
