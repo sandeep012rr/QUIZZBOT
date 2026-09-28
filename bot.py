@@ -16,7 +16,18 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.0-pro')
+
+# --- Google का सपोर्टेड मॉडल ऑटोमैटिक ढूँढने का कोड ---
+best_model = "gemini-1.5-flash"
+try:
+    for m in genai.list_models():
+        if 'generateContent' in m.supported_generation_methods and 'gemini' in m.name.lower():
+            best_model = m.name.replace('models/', '')
+            break
+except:
+    pass
+
+model = genai.GenerativeModel(best_model)
 
 # --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
 app = Flask(__name__)
@@ -158,3 +169,4 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
+    
