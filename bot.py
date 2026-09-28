@@ -7,6 +7,7 @@ import os
 import textwrap
 from flask import Flask
 import threading
+import time
 
 # API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -15,8 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
-​model = genai.GenerativeModel('gemini-1.0-pro')
-
+model = genai.GenerativeModel('gemini-1.0-pro')
 
 # --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
 app = Flask(__name__)
@@ -150,10 +150,11 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
     
-    try:
-        print("बॉट चालू हो गया है...")
-        bot.remove_webhook() # यह लाइन पुराने सभी अटके हुए कनेक्शन हटा देगी
-        bot.polling(none_stop=True, skip_pending=True)
-    except Exception as e:
-        print(f"Error in polling: {e}")
-            
+    print("बॉट चालू हो गया है...")
+    while True:
+        try:
+            bot.remove_webhook()
+            bot.polling(none_stop=True, skip_pending=True, timeout=60)
+        except Exception as e:
+            print(f"Error in polling: {e}")
+            time.sleep(5)
