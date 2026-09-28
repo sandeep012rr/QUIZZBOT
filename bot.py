@@ -1,7 +1,7 @@
 import telebot
 import PyPDF2
 import docx
-import google.generativeai as genai
+model = genai.GenerativeModel('gemini-1.5-flash')
 from PIL import Image, ImageDraw, ImageFont
 import os
 import textwrap
