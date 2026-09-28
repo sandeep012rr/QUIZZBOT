@@ -7,27 +7,36 @@ from flask import Flask
 import threading
 import time
 import json
+import random
 
-# API Keys
+# --- 6 API KEYS SETUP ---
+# Apni 6 alag-alag keys yahan in double quotes (" ") ke andar daalein
+API_KEYS = [
+    "API_KEY_1_YAHAN_DAALEIN",
+    "API_KEY_2_YAHAN_DAALEIN",
+    "API_KEY_3_YAHAN_DAALEIN",
+    "API_KEY_4_YAHAN_DAALEIN",
+    "API_KEY_5_YAHAN_DAALEIN",
+    "API_KEY_6_YAHAN_DAALEIN"
+]
+
+# Telegram Tokens (Ye Render Environment se hi aayenge)
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
-GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-3.8-flash')
 
 # --- Flask Web Server ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Telegram JSON Quiz Bot is Running 24/7!"
+    return "✅ Telegram 6-API Quiz Bot is Running 24/7!"
 
 def run_server():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-# --- PDF/DOCX से टेक्स्ट निकालने का फ़ंक्शन ---
+# --- PDF/DOCX se text nikalne ka function ---
 def extract_text(file_path):
     text = ""
     if file_path.endswith('.pdf'):
@@ -41,8 +50,13 @@ def extract_text(file_path):
             text += para.text + "\n"
     return text
 
-# --- AI से JSON फॉर्मेट में 20 क्विज़ निकालने का फ़ंक्शन ---
+# --- AI se JSON format me Quiz nikalne ka function (Random API Key ke sath) ---
 def generate_quiz_data(text):
+    # Har baar PDF aane par randomly ek key select hogi!
+    current_key = random.choice(API_KEYS)
+    genai.configure(api_key=current_key)
+    model = genai.GenerativeModel('gemini-3.8-flash')
+    
     prompt = f"""
     You are an Expert Quiz Master and Competitive Exam Content Creator. 
     Your task is to generate high-quality, hard-level Multiple Choice Questions (MCQs) strictly based on the text/document provided by the user.
@@ -50,18 +64,18 @@ def generate_quiz_data(text):
     RULES:
     1. Base Content: Create questions ONLY from the provided text/document.
     2. Difficulty Level: Hard (Include Conceptual, Match the following, and Analytical questions).
-    3. Length Limit (CRITICAL): Telegram has strict length limits. The "question" text MUST be concise and UNDER 250 characters. DO NOT write very long paragraphs in the question. Keep options under 80 characters, and solutions under 150 characters.
+    3. Length Limit (CRITICAL): Telegram has strict length limits. The "question" text MUST be concise and UNDER 250 characters. Keep options under 80 characters, and solutions under 150 characters.
     4. Language: Hindi.
-    5. Question Count: Generate exactly 20 questions (or as many as possible if the content is short).
+    5. Question Count: Generate exactly 20 questions.
     6. Options: Provide exactly 4 options (A, B, C, D) for each question.
-    7. Correct Answer: Only one option must be correct. Randomize the correct option.
+    7. Correct Answer: Only one option must be correct.
     8. Solution: Provide a brief, logical explanation for the correct answer.
-    9. STRICT OUTPUT FORMAT: You MUST return the output ONLY as a valid JSON array. Do not wrap the output in markdown code blocks (like ```json). Just output the raw JSON array.
+    9. STRICT OUTPUT FORMAT: Return ONLY a valid JSON array.
 
     JSON FORMAT TEMPLATE:
     [
       {{
-        "question": "प्रश्न यहाँ लिखें? (ध्यान रहे, बहुत लंबा न हो)",
+        "question": "प्रश्न यहाँ लिखें?",
         "A": "पहला विकल्प",
         "B": "दूसरा विकल्प",
         "C": "तीसरा विकल्प",
@@ -78,7 +92,7 @@ def generate_quiz_data(text):
     response = model.generate_content(prompt)
     return response.text
 
-# --- JSON डेटा को डिकोड करने का स्मार्ट फ़ंक्शन ---
+# --- JSON Data Decode function ---
 def parse_quiz_data(raw_data):
     quizzes = []
     try:
@@ -101,50 +115,19 @@ def parse_quiz_data(raw_data):
                 ],
                 "solution": item.get("solution", "सही उत्तर चुनने के लिए धन्यवाद!")
             }
-            
             ans = str(item.get("answer", "A")).strip().upper()
             ans_map = {'A': 0, 'B': 1, 'C': 2, 'D': 3}
             quiz['correct_option_id'] = ans_map.get(ans, 0)
-            
             if len(quiz['options']) >= 2 and quiz['question']:
                 quizzes.append(quiz)
     except Exception as e:
         print(f"JSON Parsing Error: {e}")
-        
     return quizzes
 
-# --- बॉट का कनेक्शन चेक करने के लिए /start कमांड ---
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    bot.reply_to(message, "✅ मैं बिल्कुल सही तरीके से चालू हूँ! कृपया मुझे अपनी PDF या DOCX फ़ाइल भेजें (20 सवालों के लिए)।")
-
-# --- टेलीग्राम पर फ़ाइल भेजने का हिस्सा ---
-@bot.message_handler(content_types=['document'])
-def handle_docs(message):
-    try:
-        bot.reply_to(message, "फ़ाइल प्राप्त हुई। 20 हार्ड-लेवल (Hard-Level) प्रश्न तैयार किए जा रहे हैं, इसमें थोड़ा समय लग सकता है, कृपया प्रतीक्षा करें...")
-        
-        file_info = bot.get_file(message.document.file_id)
-        downloaded_file = bot.download_file(file_info.file_path)
-        
-        file_ext = ".pdf" if message.document.file_name.endswith('.pdf') else ".docx"
-        file_path = f"temp{file_ext}"
-        
-        with open(file_path, 'wb') as new_file:
-            new_file.write(downloaded_file)
-            
-        text = extract_text(file_path)
-        raw_quiz = generate_quiz_data(text)
-        quizzes = parse_quiz_data(raw_quiz)
-        
-        if not quizzes:
-            bot.reply_to(message, "इस फ़ाइल से प्रश्न नहीं बन पाए। कृपया दूसरी फ़ाइल भेजें।")
-            return
-            
-        bot.reply_to(message, f"✅ कुल {len(quizzes)} हार्ड-लेवल प्रश्न बने हैं। अब ये एक-एक करके 30 सेकंड के अंतराल पर चैनल पर पोस्ट होंगे!")
-        
-        for index, quiz_data in enumerate(quizzes):
-            # सेफ्टी लेयर बरकरार रखी है, लेकिन अब AI खुद ही छोटे प्रश्न भेजेगा
+# --- Background Quiz Sender ---
+def send_quizzes_background(message, quizzes):
+    for index, quiz_data in enumerate(quizzes):
+        try:
             safe_question = quiz_data['question'][:290] 
             safe_options = [opt[:95] for opt in quiz_data['options']]
             safe_explanation = quiz_data['solution'][:195]
@@ -163,18 +146,53 @@ def handle_docs(message):
             
             if index < len(quizzes) - 1:
                 time.sleep(30)
-                
-        bot.reply_to(message, f"🎉 सभी {len(quizzes)} कठिन क्विज़ सफलतापूर्वक पोस्ट कर दिए गए हैं!")
+        except Exception as e:
+            print(f"Poll bhejne me error: {e}")
+            
+    bot.reply_to(message, f"🎉 Sabhi {len(quizzes)} questions channel par successfully post ho gaye!")
+
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    bot.reply_to(message, "✅ Main 6 API Keys ke sath fully active hu! PDF bhej dijiye.")
+
+@bot.message_handler(content_types=['document'])
+def handle_docs(message):
+    try:
+        bot.reply_to(message, "⏳ File mil gayi h. Questions ban rahe hain, kripya wait karein...")
+        
+        file_info = bot.get_file(message.document.file_id)
+        downloaded_file = bot.download_file(file_info.file_path)
+        
+        file_ext = ".pdf" if message.document.file_name.endswith('.pdf') else ".docx"
+        file_path = f"temp{file_ext}"
+        
+        with open(file_path, 'wb') as new_file:
+            new_file.write(downloaded_file)
+            
+        text = extract_text(file_path)
+        raw_quiz = generate_quiz_data(text)
+        quizzes = parse_quiz_data(raw_quiz)
+        
+        if not quizzes:
+            bot.reply_to(message, "❌ Is file se questions nahi ban paye.")
+            return
+            
+        bot.reply_to(message, f"✅ Kul {len(quizzes)} questions ban gaye hain. Ab ye background me aate rahenge!")
+        
+        threading.Thread(target=send_quizzes_background, args=(message, quizzes)).start()
         
     except Exception as e:
-        bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई: {e}")
+        # Error handling ko thoda user friendly banaya hai
+        if "429" in str(e):
+            bot.reply_to(message, "❌ Quota Exceeded! Lagta hai 6 ki 6 keys thak gayi hain. Kripya 2-3 minute baad dobara PDF bhejein.")
+        else:
+            bot.reply_to(message, f"❌ Technical Error: {e}")
 
-# --- बॉट और वेब सर्वर ---
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
     
-    print("बॉट चालू हो गया है...")
+    print("Bot chalu ho gaya h (with 6 APIs)...")
     
     try:
         bot.remove_webhook()
