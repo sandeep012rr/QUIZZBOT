@@ -15,7 +15,8 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-pro')
+​model = genai.GenerativeModel('gemini-1.0-pro')
+
 
 # --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
 app = Flask(__name__)
