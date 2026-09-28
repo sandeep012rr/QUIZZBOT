@@ -16,6 +16,7 @@ GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-pro')
+
 # --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
 app = Flask(__name__)
 
@@ -147,11 +148,11 @@ def handle_docs(message):
 if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
-    print("बॉट चालू हो गया है...")
-        try:
+    
+    try:
         print("बॉट चालू हो गया है...")
-        # यह लाइन पुराने सभी अटके हुए मैसेजेस को हटा देगी जिससे 409 एरर खत्म हो जाएगा
+        bot.remove_webhook() # यह लाइन पुराने सभी अटके हुए कनेक्शन हटा देगी
         bot.polling(none_stop=True, skip_pending=True)
     except Exception as e:
         print(f"Error in polling: {e}")
-
+            
