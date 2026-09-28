@@ -9,18 +9,21 @@ import time
 import json
 import random
 
-# --- 6 API KEYS SETUP ---
-# Apni 6 alag-alag keys yahan in double quotes (" ") ke andar daalein
+# --- 6 API KEYS SETUP (Render Environment Variables से पढ़ना) ---
+# यहाँ हम os.environ का इस्तेमाल करके आपकी Keys को सुरक्षित रूप से पढ़ रहे हैं
 API_KEYS = [
-    "API_KEY_1_YAHAN_DAALEIN",
-    "API_KEY_2_YAHAN_DAALEIN",
-    "API_KEY_3_YAHAN_DAALEIN",
-    "API_KEY_4_YAHAN_DAALEIN",
-    "API_KEY_5_YAHAN_DAALEIN",
-    "API_KEY_6_YAHAN_DAALEIN"
+    os.environ.get("API_KEY_1"),
+    os.environ.get("API_KEY_2"),
+    os.environ.get("API_KEY_3"),
+    os.environ.get("API_KEY_4"),
+    os.environ.get("API_KEY_5"),
+    os.environ.get("API_KEY_6")
 ]
 
-# Telegram Tokens (Ye Render Environment se hi aayenge)
+# अगर कोई Key खाली है तो उसे लिस्ट से हटा दें ताकि एरर न आए
+API_KEYS = [key for key in API_KEYS if key is not None and key != ""]
+
+# Telegram Tokens
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
@@ -31,12 +34,11 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "✅ Telegram 6-API Quiz Bot is Running 24/7!"
+    return f"✅ Telegram 6-API Quiz Bot is Running 24/7! (Active Keys: {len(API_KEYS)})"
 
 def run_server():
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
 
-# --- PDF/DOCX se text nikalne ka function ---
 def extract_text(file_path):
     text = ""
     if file_path.endswith('.pdf'):
@@ -50,9 +52,11 @@ def extract_text(file_path):
             text += para.text + "\n"
     return text
 
-# --- AI se JSON format me Quiz nikalne ka function (Random API Key ke sath) ---
 def generate_quiz_data(text):
-    # Har baar PDF aane par randomly ek key select hogi!
+    # बॉट हर बार रैंडमली एक Key चुनेगा!
+    if not API_KEYS:
+        raise Exception("API keys not found in Render Environment!")
+        
     current_key = random.choice(API_KEYS)
     genai.configure(api_key=current_key)
     model = genai.GenerativeModel('gemini-3.8-flash')
@@ -92,7 +96,6 @@ def generate_quiz_data(text):
     response = model.generate_content(prompt)
     return response.text
 
-# --- JSON Data Decode function ---
 def parse_quiz_data(raw_data):
     quizzes = []
     try:
@@ -124,7 +127,6 @@ def parse_quiz_data(raw_data):
         print(f"JSON Parsing Error: {e}")
     return quizzes
 
-# --- Background Quiz Sender ---
 def send_quizzes_background(message, quizzes):
     for index, quiz_data in enumerate(quizzes):
         try:
@@ -153,7 +155,7 @@ def send_quizzes_background(message, quizzes):
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
-    bot.reply_to(message, "✅ Main 6 API Keys ke sath fully active hu! PDF bhej dijiye.")
+    bot.reply_to(message, f"✅ Main {len(API_KEYS)} API Keys ke sath active hu! PDF bhej dijiye.")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
@@ -182,9 +184,8 @@ def handle_docs(message):
         threading.Thread(target=send_quizzes_background, args=(message, quizzes)).start()
         
     except Exception as e:
-        # Error handling ko thoda user friendly banaya hai
         if "429" in str(e):
-            bot.reply_to(message, "❌ Quota Exceeded! Lagta hai 6 ki 6 keys thak gayi hain. Kripya 2-3 minute baad dobara PDF bhejein.")
+            bot.reply_to(message, "❌ Quota Exceeded! Kripya 2-3 minute baad dobara PDF bhejein.")
         else:
             bot.reply_to(message, f"❌ Technical Error: {e}")
 
@@ -192,7 +193,7 @@ if __name__ == "__main__":
     t = threading.Thread(target=run_server)
     t.start()
     
-    print("Bot chalu ho gaya h (with 6 APIs)...")
+    print("Bot chalu ho gaya h (with Render API Keys)...")
     
     try:
         bot.remove_webhook()
@@ -206,4 +207,3 @@ if __name__ == "__main__":
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
-    
