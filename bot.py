@@ -173,12 +173,17 @@ if __name__ == "__main__":
     t.start()
     
     print("बॉट चालू हो गया है...")
+    
+    # कनेक्शन फिक्स: Webhook को लूप के बाहर हटाया गया है
+    try:
+        bot.remove_webhook()
+        time.sleep(2)
+    except:
+        pass
+
     while True:
         try:
-            bot.remove_webhook()
-            # timeout को 60 से 20 किया गया है ताकि कनेक्शन जल्दी रीफ्रेश हो
             bot.polling(none_stop=True, skip_pending=True, timeout=20)
         except Exception as e:
             print(f"Error in polling: {e}")
             time.sleep(5)
-                
