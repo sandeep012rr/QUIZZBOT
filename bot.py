@@ -9,8 +9,8 @@ from flask import Flask
 import threading
 
 # API Keys
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("CHANNEL_ID") 
+BOT_TOKEN = os.environ.get("7589769291:AAFSErrT1V5Wt1eGZ235vV4M2-QZuPALhTM")
+CHANNEL_ID = os.environ.get("") 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
