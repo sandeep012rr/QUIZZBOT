@@ -5,16 +5,29 @@ import google.generativeai as genai
 from PIL import Image, ImageDraw, ImageFont
 import os
 import textwrap
+from flask import Flask
+import threading
 
-# Render पर Environment Variables से Keys ली जाएंगी (यहाँ सीधे न लिखें)
+# API Keys
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("CHANNEL_ID")  # उदाहरण: "@your_channel_name"
+CHANNEL_ID = os.environ.get("CHANNEL_ID") 
 GEMINI_API_KEY = os.environ.get("GEMINI_API_KEY")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-pro')
 
+# --- Flask Web Server (Render को फ्री में चलाने के लिए) ---
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "✅ Telegram Quiz Bot is Running 24/7!"
+
+def run_server():
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 10000)))
+
+# --- PDF/DOCX से टेक्स्ट निकालने का फ़ंक्शन ---
 def extract_text(file_path):
     text = ""
     if file_path.endswith('.pdf'):
@@ -28,6 +41,7 @@ def extract_text(file_path):
             text += para.text + "\n"
     return text
 
+# --- AI से क्विज़ बनाने का फ़ंक्शन ---
 def generate_quiz_data(text):
     prompt = f"""
     नीचे दिए गए टेक्स्ट को पढ़ें और उसमें से 1 बेहतरीन प्रतियोगी परीक्षा स्तर का बहुविकल्पीय प्रश्न (MCQ) बनाएँ।
@@ -46,6 +60,7 @@ def generate_quiz_data(text):
     response = model.generate_content(prompt)
     return response.text
 
+# --- क्विज़ डेटा को अलग करने का फ़ंक्शन ---
 def parse_quiz_data(raw_data):
     lines = raw_data.strip().split('\n')
     quiz = {"options": []}
@@ -71,11 +86,11 @@ def parse_quiz_data(raw_data):
             
     return quiz
 
+# --- इमेज बैनर बनाने का फ़ंक्शन ---
 def create_banner(question_text):
-    img = Image.new('RGB', (800, 400), color=(41, 128, 185)) # नीला बैकग्राउंड
+    img = Image.new('RGB', (800, 400), color=(41, 128, 185)) 
     d = ImageDraw.Draw(img)
     
-    # हिंदी फॉन्ट लोड करना (आपको यह फाइल GitHub पर अपलोड करनी होगी)
     try:
         font = ImageFont.truetype("Mukta-Regular.ttf", 35)
     except:
@@ -83,7 +98,6 @@ def create_banner(question_text):
         
     d.text((50, 50), "📚 आज का महत्वपूर्ण प्रश्न", fill=(255, 255, 0), font=font)
     
-    # टेक्स्ट को अगली लाइन में तोड़ना ताकि बैनर से बाहर न जाए
     wrapped_text = textwrap.fill(question_text, width=45)
     d.text((50, 120), wrapped_text, fill=(255, 255, 255), font=font)
     
@@ -91,6 +105,7 @@ def create_banner(question_text):
     img.save(banner_path)
     return banner_path
 
+# --- जब आप टेलीग्राम पर फ़ाइल भेजेंगे तब यह चलेगा ---
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     try:
@@ -120,7 +135,7 @@ def handle_docs(message):
             options=quiz_data['options'],
             type="quiz",
             correct_option_id=quiz_data['correct_option_id'],
-            explanation=quiz_data.get('solution', 'सही उत्तर चुनने के लिए धन्यवाद!'), # यह Telegram का 💡 फीचर है
+            explanation=quiz_data.get('solution', 'सही उत्तर चुनने के लिए धन्यवाद!'), 
             is_anonymous=True
         )
         
@@ -129,5 +144,9 @@ def handle_docs(message):
     except Exception as e:
         bot.reply_to(message, f"❌ कोई तकनीकी समस्या आई: {e}")
 
-print("बॉट चालू हो गया है...")
-bot.polling(none_stop=True)
+# --- बॉट और वेब सर्वर दोनों को एक साथ चलाना ---
+if __name__ == "__main__":
+    t = threading.Thread(target=run_server)
+    t.start()
+    print("बॉट चालू हो गया है...")
+    bot.polling(none_stop=True)
