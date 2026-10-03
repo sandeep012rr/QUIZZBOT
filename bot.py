@@ -1,34 +1,29 @@
 import os
 import re
 import time
-import json
 import threading
 import telebot
-import requests
 from pypdf import PdfReader
 from docx import Document
 from flask import Flask
 
-# ================= RENDER PORT SERVER =================
-# Render Free Web Service ko port chahiye hota hai taaki crash na ho
+# ================= RENDER PORT DUMMY SERVER =================
 web_app = Flask(__name__)
 
 @web_app.route('/')
 def home():
-    return "Quiz Bot is running successfully on Render!"
+    return "Quiz Bot is live and running!"
 
 def run_web():
     port = int(os.environ.get("PORT", 8080))
     web_app.run(host="0.0.0.0", port=port)
 
-# Background thread me Flask server start karein
 threading.Thread(target=run_web, daemon=True).start()
-# ======================================================
+# ============================================================
 
+# अपना नया/सुरक्षित Bot Token और Channel ID यहाँ डालें
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "7589769291:AAFSErrT1V5Wt1eGZ235vV4M2-QZuPALhTM")
-CHANNEL_ID = "@FIRST_GARDE_SPL"
-GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
-MODEL_NAME = "qwen/qwen3.8-27b"
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "@FIRST_GARDE_SPL")
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
@@ -55,95 +50,79 @@ def extract_text_from_docx(file_path):
         print(f"DOCX Error: {e}")
     return text
 
-def extract_quizzes_robust(raw_text):
+def parse_exact_mcqs(text):
+    """
+    यूजर के दिए गए सटीक फॉर्मेट से बिना AI के हूबहू सवाल पार्स करता है।
+    Format:
+    Question: ...
+    (a) ...
+    (b) ...
+    (c) ...
+    (d) ...
+    Answer: a/b/c/d
+    Solution: ...
+    """
     quizzes = []
-    if not raw_text:
-        return quizzes
+    
+    # "Question:" शब्द के आधार पर स्प्लिट करें
+    raw_blocks = re.split(r'\n(?=Question:)', "\n" + text.strip())
+    
+    opt_map = {'a': 0, 'b': 1, 'c': 2, 'd': 3}
 
-    cleaned = raw_text.strip()
-    if "```json" in cleaned:
-        cleaned = cleaned.split("```json")[1].split("```")[0].strip()
-    elif "```" in cleaned:
-        cleaned = cleaned.split("```")[1].split("```")[0].strip()
-
-    try:
-        data = json.loads(cleaned)
-        if isinstance(data, dict):
-            for k in ["quizzes", "questions", "quiz", "data"]:
-                if k in data and isinstance(data[k], list):
-                    return data[k]
-        elif isinstance(data, list):
-            return data
-    except Exception:
-        pass
-
-    pattern = re.compile(r'\{\s*"question"\s*:.*?"options"\s*:\s*\[.*?\].*?\}', re.DOTALL)
-    matches = pattern.findall(raw_text)
-    for m in matches:
+    for block in raw_blocks:
+        if not block.strip() or "Question:" not in block:
+            continue
+        
         try:
-            q_obj = json.loads(m)
-            if "question" in q_obj and "options" in q_obj and len(q_obj["options"]) >= 2:
-                quizzes.append(q_obj)
-        except Exception:
+            # 1. Question निकालें
+            q_match = re.search(r'Question:\s*(.*?)(?=\([a-dA-D]\)|Answer:|$)', block, re.DOTALL)
+            if not q_match:
+                continue
+            question = q_match.group(1).strip()
+            
+            # 2. Options निकालें: (a), (b), (c), (d)
+            options = []
+            opt_pattern = re.findall(r'\(([a-dA-D])\)\s*(.*?)(?=\([a-dA-D]\)|Answer:|Solution:|Key Points:|Positive Marks:|$)', block, re.DOTALL)
+            
+            for tag, opt_text in opt_pattern:
+                clean_opt = opt_text.strip()
+                if clean_opt:
+                    options.append(clean_opt)
+
+            # 3. Answer निकालें
+            ans_match = re.search(r'Answer:\s*([a-dA-D])', block, re.IGNORECASE)
+            if ans_match:
+                ans_char = ans_match.group(1).lower()
+                correct_id = opt_map.get(ans_char, 0)
+            else:
+                correct_id = 0
+
+            # 4. Solution / Explanation निकालें
+            sol_match = re.search(r'Solution:\s*(.*?)(?=Key Points:|Positive Marks:|Negative Marks:|\n\n|$)', block, re.DOTALL)
+            explanation = sol_match.group(1).strip() if sol_match else ""
+
+            # Telegram Quiz की कानूनी सीमाएँ (Length Limits)
+            # Question <= 300 chars, Option <= 100 chars, Explanation <= 200 chars
+            if question and len(options) >= 2:
+                quizzes.append({
+                    "question": question[:290],
+                    "options": [opt[:98] for opt in options[:4]],
+                    "correct_id": min(correct_id, len(options) - 1),
+                    "explanation": explanation[:195]
+                })
+        except Exception as err:
+            print(f"Parsing item error: {err}")
             continue
 
     return quizzes
 
-def fetch_5_questions(content_chunk, batch_no):
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    prompt = f"""
-आप एक शिक्षक भर्ती परीक्षा विशेषज्ञ हैं। 
-नीचे दी गई पाठ्य सामग्री के आधार पर ठीक 5 बहुत कठिन, विश्लेषणात्मक (Hard Level) बहुविकल्पीय प्रश्न (MCQs) केवल शुद्ध हिंदी में तैयार करें (सेट {batch_no})।
-
-नियम:
-1. प्रत्येक प्रश्न में ठीक 4 विकल्प होने चाहिए।
-2. प्रश्न और व्याख्या संक्षिप्त रखें।
-3. केवल शुद्ध JSON फॉर्मेट दें।
-
-JSON संरचना:
-{{
-  "quizzes": [
-    {{
-      "question": "कठिन प्रश्न यहाँ लिखें (संक्षिप्त)",
-      "options": ["विकल्प A", "विकल्प B", "विकल्प C", "विकल्प D"],
-      "correct_option_id": 0,
-      "explanation": "संक्षिप्त व्याख्या"
-    }}
-  ]
-}}
-
-सामग्री:
-{content_chunk}
-"""
-
-    payload = {
-        "model": MODEL_NAME,
-        "messages": [
-            {"role": "system", "content": "You are a professional quiz maker. Always output valid JSON object."},
-            {"role": "user", "content": prompt}
-        ],
-        "temperature": 0.3,
-        "max_tokens": 800
-    }
-
-    response = requests.post(url, headers=headers, json=payload, timeout=90)
-    if response.status_code == 200:
-        raw_content = response.json()["choices"][0]["message"]["content"]
-        return extract_quizzes_robust(raw_content)
-    else:
-        raise Exception(f"Groq API {response.status_code}: {response.text[:150]}")
-
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    bot.reply_to(message, "नमस्ते! मुझे कोई भी PDF या DOCX फ़ाइल भेजें, मैं 20 कठिन बहुविकल्पीय प्रश्न बनाकर सीधे चैनल पर पोस्ट कर दूँगा।")
+    bot.reply_to(message, "नमस्ते! मुझे 'Question / (a)(b)(c)(d) / Answer / Solution' फॉर्मेट वाली PDF या DOCX फ़ाइल भेजें, मैं हूबहू वही प्रश्न सीधे चैनल पर क्विज़ पोल बनाकर पोस्ट कर दूँगा।")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
+    local_path = None
     try:
         file_name = message.document.file_name.lower()
         if not (file_name.endswith('.pdf') or file_name.endswith('.docx')):
@@ -159,73 +138,71 @@ def handle_docs(message):
         with open(local_path, 'wb') as new_file:
             new_file.write(downloaded_file)
 
-        bot.edit_message_text("📖 फ़ाइल पढ़ी जा रही है...", chat_id=message.chat.id, message_id=status_msg.message_id)
-        
+        bot.edit_message_text("📖 फ़ाइल से हूबहू प्रश्न पढ़े जा रहे हैं...", chat_id=message.chat.id, message_id=status_msg.message_id)
+
         if local_path.lower().endswith('.pdf'):
             text = extract_text_from_pdf(local_path)
         else:
             text = extract_text_from_docx(local_path)
 
+        # फाइल डिलीट करें
         if os.path.exists(local_path):
             os.remove(local_path)
+            local_path = None
 
-        if len(text.strip()) < 50:
-            bot.edit_message_text("❌ फ़ाइल में पर्याप्त टेक्स्ट नहीं मिला।", chat_id=message.chat.id, message_id=status_msg.message_id)
+        # प्रश्नों को पार्स करें
+        quizzes = parse_exact_mcqs(text)
+
+        if not quizzes:
+            bot.edit_message_text("❌ फ़ाइल में निर्धारित फॉर्मेट (Question, (a), (b), Answer) वाले प्रश्न नहीं मिले।", chat_id=message.chat.id, message_id=status_msg.message_id)
             return
 
-        bot.edit_message_text("⚡ AI से 20 कठिन प्रश्न तैयार किए जा रहे हैं (4 सेट में)...", chat_id=message.chat.id, message_id=status_msg.message_id)
-
-        text_len = len(text)
-        chunk_size = max(1500, text_len // 4)
-        chunks = [
-            text[0 : chunk_size],
-            text[chunk_size : chunk_size * 2] if text_len > chunk_size else text[0:chunk_size],
-            text[chunk_size * 2 : chunk_size * 3] if text_len > chunk_size * 2 else text[0:chunk_size],
-            text[chunk_size * 3 : chunk_size * 4] if text_len > chunk_size * 3 else text[0:chunk_size]
-        ]
+        bot.edit_message_text(f"⚡ कुल {len(quizzes)} प्रश्न मिले हैं। चैनल पर पोस्टिंग शुरू हो रही है...", chat_id=message.chat.id, message_id=status_msg.message_id)
 
         total_posted = 0
-
-        for batch_idx in range(4):
+        for idx, q in enumerate(quizzes, start=1):
             try:
-                bot.edit_message_text(f"📝 सेट {batch_idx + 1}/4 तैयार हो रहा है (अब तक {total_posted} पोस्ट हुए)...", chat_id=message.chat.id, message_id=status_msg.message_id)
-                quizzes = fetch_5_questions(chunks[batch_idx][:3000], batch_idx + 1)
+                # Telegram Quiz Poll पोस्ट करें
+                bot.send_poll(
+                    chat_id=CHANNEL_ID,
+                    question=f"{idx}. {q['question']}"[:300],
+                    options=q['options'],
+                    type='quiz',
+                    correct_option_id=q['correct_id'],
+                    explanation=q['explanation'] if q['explanation'] else None,
+                    is_anonymous=True
+                )
+                total_posted += 1
                 
-                for q in quizzes:
-                    question = str(q.get("question", ""))[:255]
-                    options = [str(opt)[:100] for opt in q.get("options", [])][:4]
-                    correct_id = int(q.get("correct_option_id", 0))
-                    explanation = str(q.get("explanation", ""))[:190]
+                # चैनल में स्पैम ब्लॉक न हो इसलिए हर पोल के बीच 3 से 5 सेकंड का अंतराल
+                time.sleep(3)
 
-                    if len(options) >= 2:
-                        total_posted += 1
-                        bot.send_poll(
-                            chat_id=CHANNEL_ID,
-                            question=f"Q{total_posted}. {question}",
-                            options=options,
-                            type='quiz',
-                            correct_option_id=correct_id,
-                            explanation=explanation,
-                            is_anonymous=True
-                        )
-                        time.sleep(30)
-            except Exception as be:
-                print(f"Batch {batch_idx + 1} Error: {be}")
-                time.sleep(5)
+            except telebot.apihelper.ApiTelegramException as api_err:
+                print(f"Telegram API Error on Q{idx}: {api_err}")
+                # अगर चैनल में बॉट एडमिन नहीं है तो एरर आएगा
+                if "chat not found" in str(api_err).lower() or "not a member" in str(api_err).lower() or "administrator" in str(api_err).lower():
+                    bot.send_message(message.chat.id, f"⚠️ एरर: बॉट चैनल ({CHANNEL_ID}) में एडमिन नहीं है या चैनल यूजरनेम गलत है। कृपया बॉट को चैनल में Admin बनाएं।")
+                    return
+                time.sleep(3)
+            except Exception as e:
+                print(f"Post Error on Q{idx}: {e}")
+                time.sleep(2)
 
-        bot.send_message(message.chat.id, f"🎉 कुल {total_posted} कठिन प्रश्न सफलतापूर्वक चैनल पर पोस्ट हो चुके हैं!")
+        bot.send_message(message.chat.id, f"🎉 सफलतापूर्वक कुल {total_posted}/{len(quizzes)} प्रश्न चैनल पर अपलोड हो गए हैं!")
 
     except Exception as e:
-        print(f"Error: {e}")
+        print(f"General Error: {e}")
         bot.reply_to(message, f"❌ एरर: {e}")
+    finally:
+        if local_path and os.path.exists(local_path):
+            os.remove(local_path)
 
 if __name__ == "__main__":
-    print("Bot starting...")
-    # Puraane kisi bhi pending webhook/conflict ko saaf karein
+    print("Bot is starting...")
     try:
         bot.remove_webhook()
     except Exception as ex:
         print(f"Webhook clear error: {ex}")
 
-    # Polling shuru karein
     bot.infinity_polling(skip_pending=True)
+                
