@@ -2,14 +2,32 @@ import os
 import re
 import time
 import json
+import threading
 import telebot
 import requests
 from pypdf import PdfReader
 from docx import Document
+from flask import Flask
 
-BOT_TOKEN = "7589769291:AAFSErrT1V5Wt1eGZ235vV4M2-QZuPALhTM"
+# ================= RENDER PORT SERVER =================
+# Render Free Web Service ko port chahiye hota hai taaki crash na ho
+web_app = Flask(__name__)
+
+@web_app.route('/')
+def home():
+    return "Quiz Bot is running successfully on Render!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 8080))
+    web_app.run(host="0.0.0.0", port=port)
+
+# Background thread me Flask server start karein
+threading.Thread(target=run_web, daemon=True).start()
+# ======================================================
+
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "7589769291:AAFSErrT1V5Wt1eGZ235vV4M2-QZuPALhTM")
 CHANNEL_ID = "@FIRST_GARDE_SPL"
-GROQ_API_KEY = "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"
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "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")
 MODEL_NAME = "qwen/qwen3.8-27b"
 
 bot = telebot.TeleBot(BOT_TOKEN)
@@ -181,7 +199,6 @@ def handle_docs(message):
 
                     if len(options) >= 2:
                         total_posted += 1
-                        # Channel ke liye is_anonymous=True hona anivarya hai
                         bot.send_poll(
                             chat_id=CHANNEL_ID,
                             question=f"Q{total_posted}. {question}",
@@ -202,6 +219,13 @@ def handle_docs(message):
         print(f"Error: {e}")
         bot.reply_to(message, f"❌ एरर: {e}")
 
-print("Bot started with Anonymous Polls for Channel...")
-bot.infinity_polling()
-    
+if __name__ == "__main__":
+    print("Bot starting...")
+    # Puraane kisi bhi pending webhook/conflict ko saaf karein
+    try:
+        bot.remove_webhook()
+    except Exception as ex:
+        print(f"Webhook clear error: {ex}")
+
+    # Polling shuru karein
+    bot.infinity_polling(skip_pending=True)
