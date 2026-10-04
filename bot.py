@@ -23,7 +23,7 @@ threading.Thread(target=run_web, daemon=True).start()
 
 # अपना नया/सुरक्षित Bot Token और Channel ID यहाँ डालें
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "8603148971:AAGsvVBTPFU0LudEMnzqRV7fDJvOpgYXo_g")
-CHANNEL_ID = os.environ.get("CHANNEL_ID", "@FIRST_GARDE_SPL")
+CHANNEL_ID = os.environ.get("CHANNEL_ID", "@special_education_quiz)
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
