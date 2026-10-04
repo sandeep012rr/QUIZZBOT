@@ -7,7 +7,7 @@ from pypdf import PdfReader
 from docx import Document
 from flask import Flask
 
-# ================= RENDER PORT SERVER =================
+# ================= RENDER DUMMY WEB SERVER =================
 web_app = Flask(__name__)
 
 @web_app.route('/')
@@ -19,16 +19,17 @@ def run_web():
     web_app.run(host="0.0.0.0", port=port)
 
 threading.Thread(target=run_web, daemon=True).start()
-# ======================================================
+# ============================================================
 
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "YOUR_BOT_TOKEN_HERE")
-# डिफ़ॉल्ट चैनल (अगर यूजर कोई चैनल न बताए)
 DEFAULT_CHANNEL = "@FIRST_GARDE_SPL"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# यूजर द्वारा सेट किए गए चैनल को याद रखने के लिए
+# User-specific settings store karne ke liye
 user_channels = {}
+user_delays = {}      # Default gap: 30 seconds
+user_inter_msgs = {}  # Har 10 questions ke baad aane wali post
 
 def extract_text_from_pdf(file_path):
     text = ""
@@ -62,13 +63,13 @@ def parse_exact_mcqs(text):
         if not block.strip() or "Question:" not in block:
             continue
         try:
-            # 1. Question
+            # 1. Question extract karein
             q_match = re.search(r'Question:\s*(.*?)(?=\([a-dA-D]\)|Answer:|$)', block, re.DOTALL)
             if not q_match:
                 continue
             question = q_match.group(1).strip()
 
-            # 2. Options
+            # 2. Options extract karein
             options = []
             opt_pattern = re.findall(r'\(([a-dA-D])\)\s*(.*?)(?=\([a-dA-D]\)|Answer:|Solution:|Key Points:|Positive Marks:|$)', block, re.DOTALL)
             for tag, opt_text in opt_pattern:
@@ -76,11 +77,11 @@ def parse_exact_mcqs(text):
                 if clean_opt:
                     options.append(clean_opt)
 
-            # 3. Answer
+            # 3. Answer extract karein
             ans_match = re.search(r'Answer:\s*([a-dA-D])', block, re.IGNORECASE)
             correct_id = opt_map.get(ans_match.group(1).lower(), 0) if ans_match else 0
 
-            # 4. Solution
+            # 4. Explanation extract karein
             sol_match = re.search(r'Solution:\s*(.*?)(?=Key Points:|Positive Marks:|Negative Marks:|\n\n|$)', block, re.DOTALL)
             explanation = sol_match.group(1).strip() if sol_match else ""
 
@@ -99,66 +100,98 @@ def parse_exact_mcqs(text):
 
 @bot.message_handler(commands=['start', 'help'])
 def send_welcome(message):
-    current = user_channels.get(message.chat.id, DEFAULT_CHANNEL)
-    text = (
-        "नमस्ते! 👋\n\n"
-        f"🎯 **वर्तमान चैनल:** `{current}`\n\n"
-        "📌 **चैनल बदलने के 2 तरीके हैं:**\n"
-        "1. फ़ाइल भेजते समय उसके **Caption** में चैनल लिखें (उदा. `@my_new_channel`)\n"
-        "2. या कमांड भेजें: `/setchannel @my_new_channel`\n\n"
-        "अब आप मुझे अपनी PDF/DOCX फ़ाइल भेज सकते हैं!"
+    current_chan = user_channels.get(message.chat.id, DEFAULT_CHANNEL)
+    current_delay = user_delays.get(message.chat.id, 30)
+    current_msg = user_inter_msgs.get(message.chat.id, "Set nahi hai (None)")
+
+    help_text = (
+        "🤖 *Quiz Bot Control Panel & Help Menu*\n\n"
+        "📊 *Aapka Current Setup:*\n"
+        f"• 🎯 Target Channel: `{current_chan}`\n"
+        f"• ⏱ Per Question Delay: `{current_delay}` seconds\n"
+        f"• 📢 10-Question Interval Post: `{current_msg[:45]}...`\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "🛠 *Sabhi Commands ki List:*\n\n"
+        "1️⃣ `/setchannel @channel_name`\n"
+        "👉 Kisi bhi channel par quiz bhejne ke liye channel set karein.\n"
+        "Example: `/setchannel @MyExamChannel`\n\n"
+        "2️⃣ `/setdelay <seconds>`\n"
+        "👉 Har ek question ke beech ka time gap set karein (min 5s).\n"
+        "Example: `/setdelay 45`\n\n"
+        "3️⃣ `/setmsg <aapka text>`\n"
+        "👉 Har 10 questions ke baad channel par auto-post hone wala custom message set karein.\n"
+        "Example:\n`/setmsg Hamare group @MyGroup ko join karein!`\n\n"
+        "4️⃣ `/delmsg`\n"
+        "👉 10-question interval wale message ko band/delete karne ke liye.\n\n"
+        "5️⃣ `/help` ya `/start`\n"
+        "👉 Yeh command list aur current settings dekhne ke liye.\n\n"
+        "━━━━━━━━━━━━━━━━━━━━\n"
+        "📂 *File Kaise Bhejein:*\n"
+        "Bas apni `PDF` ya `DOCX` file bot ko send kar dein. Bot questions ko extract karke set kiye gaye channel par automatically poll post kar dega!"
     )
-    bot.reply_to(message, text, parse_mode="Markdown")
+    bot.reply_to(message, help_text, parse_mode="Markdown")
 
 @bot.message_handler(commands=['setchannel'])
 def set_channel_cmd(message):
     parts = message.text.strip().split()
     if len(parts) < 2:
-        bot.reply_to(
-            message,
-            "❌ कृपया चैनल का यूज़रनेम भी लिखें!\n\nउदाहरण:\n`/setchannel @my_quiz_channel`",
-            parse_mode="Markdown"
-        )
+        bot.reply_to(message, "❌ Channel username likhna zaroori hai!\nExample: `/setchannel @MyQuizChannel`", parse_mode="Markdown")
         return
-
     new_channel = parts[1].strip()
     if not new_channel.startswith("@") and not new_channel.startswith("-100"):
         new_channel = "@" + new_channel
-
     user_channels[message.chat.id] = new_channel
-    bot.reply_to(
-        message,
-        f"✅ चैनल सफलतापूर्वक बदल दिया गया है!\n🎯 **नया चैनल:** `{new_channel}`\n\nअब जो भी फ़ाइल भेजेंगे, प्रश्न इसी चैनल पर जाएंगे। (ध्यान रहे कि बॉट उस चैनल में **Admin** होना चाहिए)",
-        parse_mode="Markdown"
-    )
+    bot.reply_to(message, f"✅ Target Channel set ho gaya: `{new_channel}`\n(Dhyan rahe ki bot channel me *Admin* hona chahiye).", parse_mode="Markdown")
+
+@bot.message_handler(commands=['setdelay'])
+def set_delay_cmd(message):
+    parts = message.text.strip().split()
+    if len(parts) < 2 or not parts[1].isdigit():
+        bot.reply_to(message, "❌ Seconds me number likhein!\nExample: `/setdelay 45`", parse_mode="Markdown")
+        return
+    sec = int(parts[1])
+    if sec < 5:
+        bot.reply_to(message, "⚠️ Telegram spam se bachne ke liye kam se kam 5 seconds rakhein.")
+        return
+    user_delays[message.chat.id] = sec
+    bot.reply_to(message, f"✅ Time duration set ho gaya: Har question ke beech `{sec}` seconds ka gap rahega.", parse_mode="Markdown")
+
+@bot.message_handler(commands=['setmsg'])
+def set_interval_message(message):
+    msg_content = message.text.replace('/setmsg', '', 1).strip()
+    if not msg_content:
+        bot.reply_to(message, "❌ Message likhna zaroori hai!\nExample:\n`/setmsg Join our channel @abc for daily PDFs!`", parse_mode="Markdown")
+        return
+    user_inter_msgs[message.chat.id] = msg_content
+    bot.reply_to(message, f"✅ Interval message set ho gaya! Ab har 10 question ke baad yeh post jayegi:\n\n{msg_content}")
+
+@bot.message_handler(commands=['delmsg'])
+def delete_interval_message(message):
+    user_inter_msgs.pop(message.chat.id, None)
+    bot.reply_to(message, "✅ Interval message hata diya gaya hai. Ab sirf questions post honge.")
 
 @bot.message_handler(content_types=['document'])
 def handle_docs(message):
     local_path = None
     try:
-        # 1. तय करें कि किस चैनल पर भेजना है
-        target_channel = None
+        target_channel = user_channels.get(message.chat.id, DEFAULT_CHANNEL)
+        delay_sec = user_delays.get(message.chat.id, 30)
+        custom_interval_post = user_inter_msgs.get(message.chat.id, None)
 
-        # चेक करें क्या कैप्शन में चैनल दिया गया है?
+        # File caption me direct channel check karein
         if message.caption:
-            caption_text = message.caption.strip()
-            # कैप्शन में से @username या channel id खोजें
-            match = re.search(r'(@[a-zA-Z0-9_]+|-100\d+)', caption_text)
+            match = re.search(r'(@[a-zA-Z0-9_]+|-100\d+)', message.caption.strip())
             if match:
                 target_channel = match.group(1)
 
-        # अगर कैप्शन में नहीं मिला, तो यूजर द्वारा सेट किया गया चैनल लें
-        if not target_channel:
-            target_channel = user_channels.get(message.chat.id, DEFAULT_CHANNEL)
-
         file_name = message.document.file_name.lower()
         if not (file_name.endswith('.pdf') or file_name.endswith('.docx')):
-            bot.reply_to(message, "कृपया केवल PDF या DOCX फ़ाइल भेजें।")
+            bot.reply_to(message, "Kripya kewal PDF ya DOCX file bhejein.")
             return
 
         status_msg = bot.reply_to(
             message,
-            f"⏳ फ़ाइल डाउनलोड हो रही है...\n🎯 लक्ष्य चैनल: `{target_channel}`",
+            f"⏳ File download ho rahi hai...\n🎯 Channel: `{target_channel}`\n⏱ Gap: `{delay_sec}s`",
             parse_mode="Markdown"
         )
 
@@ -170,10 +203,9 @@ def handle_docs(message):
             new_file.write(downloaded_file)
 
         bot.edit_message_text(
-            f"📖 फ़ाइल पढ़ी जा रही है...\n🎯 लक्ष्य चैनल: `{target_channel}`",
+            "📖 File se questions extract kiye ja rahe hain...",
             chat_id=message.chat.id,
-            message_id=status_msg.message_id,
-            parse_mode="Markdown"
+            message_id=status_msg.message_id
         )
 
         if local_path.lower().endswith('.pdf'):
@@ -189,14 +221,14 @@ def handle_docs(message):
 
         if not quizzes:
             bot.edit_message_text(
-                "❌ फ़ाइल में निर्धारित फॉर्मेट वाले प्रश्न नहीं मिले।",
+                "❌ File me format match nahi hua (Question, (a), (b), Answer format chahiye).",
                 chat_id=message.chat.id,
                 message_id=status_msg.message_id
             )
             return
 
         bot.edit_message_text(
-            f"⚡ कुल {len(quizzes)} प्रश्न मिले हैं। `{target_channel}` पर पोस्टिंग शुरू हो रही है...",
+            f"⚡ Total {len(quizzes)} questions mile hain.\n`{target_channel}` par posting shuru ho rahi hai...",
             chat_id=message.chat.id,
             message_id=status_msg.message_id,
             parse_mode="Markdown"
@@ -215,7 +247,14 @@ def handle_docs(message):
                     is_anonymous=True
                 )
                 total_posted += 1
-                time.sleep(3)  # Telegram spam protection ke liye
+
+                # Har 10 questions ke baad custom message bhejna
+                if idx % 10 == 0 and custom_interval_post:
+                    time.sleep(3)
+                    bot.send_message(chat_id=target_channel, text=custom_interval_post)
+
+                # Question delay
+                time.sleep(delay_sec)
 
             except telebot.apihelper.ApiTelegramException as api_err:
                 err_str = str(api_err).lower()
@@ -223,24 +262,24 @@ def handle_docs(message):
                 if "chat not found" in err_str or "not a member" in err_str or "administrator" in err_str:
                     bot.send_message(
                         message.chat.id,
-                        f"⚠️ **त्रुटि:** बॉट `{target_channel}` में एडमिन नहीं है या चैनल का नाम गलत है।\nकृपया बॉट को चैनल में Admin बनाएं।",
+                        f"⚠️ Error: Bot `{target_channel}` me admin nahi hai ya username galat hai.",
                         parse_mode="Markdown"
                     )
                     return
-                time.sleep(3)
+                time.sleep(5)
             except Exception as e:
                 print(f"Post Error on Q{idx}: {e}")
-                time.sleep(2)
+                time.sleep(3)
 
         bot.send_message(
             message.chat.id,
-            f"🎉 सफलतापूर्वक {total_posted}/{len(quizzes)} प्रश्न `{target_channel}` पर अपलोड हो गए हैं!",
+            f"🎉 Success! Total {total_posted}/{len(quizzes)} questions post ho chuke hain `{target_channel}` par.",
             parse_mode="Markdown"
         )
 
     except Exception as e:
         print(f"General Error: {e}")
-        bot.reply_to(message, f"❌ एरर: {e}")
+        bot.reply_to(message, f"❌ Error: {e}")
     finally:
         if local_path and os.path.exists(local_path):
             os.remove(local_path)
@@ -253,4 +292,3 @@ if __name__ == "__main__":
         print(f"Webhook clear error: {ex}")
 
     bot.infinity_polling(skip_pending=True)
-            
